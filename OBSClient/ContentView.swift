@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  OBSClient
 //
-//  Created by Dominik Guggisberg on 05.12.2025.
+//  Created on 05.12.2025.
 //
 
 import SwiftUI
