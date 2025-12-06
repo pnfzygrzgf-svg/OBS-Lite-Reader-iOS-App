@@ -279,7 +279,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     // MARK: - UI / Preview-Logik
 
     fileprivate func updateDerivedState(from event: Openbikesensor_Event) {
-        // Anzeige / Preview (wie vorher)
+        // Anzeige / Preview
         switch event.content {
         case .distanceMeasurement(let dm)?:
             let d = Double(dm.distance)
@@ -313,7 +313,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             handleDistancePreview(dm)
 
         case .userInput(_)?:
-            handleUserInputPreview()
+            handleUserInputPreview(from: event)
 
         default:
             break
@@ -350,26 +350,30 @@ extension BluetoothManager: CBPeripheralDelegate {
             rightDistanceText = "Rechts (ID \(dm.sourceID)): \(infoText)"
         }
 
-        // CSV: Messung schreiben, wenn Aufnahme läuft
+        // CSV: kontinuierliche Trackpunkte schreiben, wenn Aufnahme läuft
         if isRecording {
             let ts = Date()
             if dm.sourceID == 1 {
                 csvWriter.appendMeasurement(
                     timestamp: ts,
                     leftCm: correctedCm,
-                    rightCm: nil
+                    rightCm: nil,
+                    comment: nil,
+                    confirmed: false
                 )
             } else {
                 csvWriter.appendMeasurement(
                     timestamp: ts,
                     leftCm: nil,
-                    rightCm: correctedCm
+                    rightCm: correctedCm,
+                    comment: nil,
+                    confirmed: false
                 )
             }
         }
     }
 
-    private func handleUserInputPreview() {
+    private func handleUserInputPreview(from event: Openbikesensor_Event) {
         guard let median = movingMedian.currentMedian else {
             overtakeDistanceText = "Überholabstand: –"
             lastMedianAtPressCm = nil
@@ -378,6 +382,18 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         lastMedianAtPressCm = median
         overtakeDistanceText = "Überholabstand: \(median) cm"
+
+        // CSV: bestätigte Messung beim Button-Event
+        if isRecording {
+            let ts = Date() // alternativ: Zeit aus event.time
+            csvWriter.appendMeasurement(
+                timestamp: ts,
+                leftCm: median,
+                rightCm: nil,
+                comment: nil,
+                confirmed: true
+            )
+        }
     }
 
     // MARK: - BIN Schreiblogik

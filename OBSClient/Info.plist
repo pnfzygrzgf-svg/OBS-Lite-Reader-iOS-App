@@ -7,5 +7,7 @@
 		<string>bluetooth-central</string>
 		<string>location</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<false/>
 </dict>
 </plist>
