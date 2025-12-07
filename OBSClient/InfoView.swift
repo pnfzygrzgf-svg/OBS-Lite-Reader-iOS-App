@@ -8,8 +8,7 @@ struct InfoView: View {
                 // MARK: Intro
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Über diese App")
-                        .font(.title2)
-                        .bold()
+                        .font(.obsScreenTitle)
 
                     Text("""
 Diese App zeichnet Fahrten und Überholabstände auf, die mit einem \
@@ -18,19 +17,21 @@ OpenBikeSensor Lite aufgezeichnet wurden.
 
                     Link("Mehr zum OpenBikeSensor Lite",
                          destination: URL(string: "https://www.openbikesensor.org/docs/lite/")!)
-                        .font(.subheadline)
+                        .font(.obsFootnote)
                 }
 
                 // MARK: Credits
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Danksagungen & verwendete Projekte")
-                        .font(.headline)
+                        .font(.obsSectionTitle)
 
                     Group {
                         Text("OpenBikeSensor")
-                            .bold()
+                            .font(.obsBody.weight(.bold))
+
                         Link("https://github.com/openbikesensor",
                              destination: URL(string: "https://github.com/openbikesensor")!)
+
                         Text("""
 In dieser App wird Code des OpenBikeSensor-Projekts verwendet. \
 Die Originalsoftware wird unter der GNU Lesser General Public License (LGPL-3.0) veröffentlicht.
@@ -41,9 +42,11 @@ Die Originalsoftware wird unter der GNU Lesser General Public License (LGPL-3.0)
 
                     Group {
                         Text("OpenBikeSensor-Logo")
-                            .bold()
+                            .font(.obsBody.weight(.bold))
+
                         Link("https://github.com/turbo-distortion/OpenBikeSensor-Logo",
                              destination: URL(string: "https://github.com/turbo-distortion/OpenBikeSensor-Logo")!)
+
                         Text("""
 Das in dieser App verwendete OpenBikeSensor-Logo wurde von Lukas Betzler als Beitrag \
 zum OpenBikeSensor-Projekt erstellt. Das Logo steht unter der Creative-Commons-Lizenz \
@@ -56,9 +59,11 @@ unter derselben Lizenz erforderlich.
 
                     Group {
                         Text("SimRa Android App")
-                            .bold()
+                            .font(.obsBody.weight(.bold))
+
                         Link("https://github.com/simra-project/simra-android",
                              destination: URL(string: "https://github.com/simra-project/simra-android")!)
+
                         Text("""
 Teile des Quellcodes, insbesondere zur Fahrtenaufzeichnung, basieren auf Code aus der \
 SimRa Android App. Diese steht unter der Apache License 2.0.
@@ -69,7 +74,7 @@ SimRa Android App. Diese steht unter der Apache License 2.0.
                 // MARK: Lizenz
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Lizenz dieser App")
-                        .font(.headline)
+                        .font(.obsSectionTitle)
 
                     Text("""
 Diese App wird als Open-Source-Software bereitgestellt.
@@ -82,6 +87,7 @@ Bitte beachte, dass für die oben genannten Projekte weiterhin deren eigene Lize
                 }
             }
             .padding()
+            .font(.obsBody) // Basis-Font in InfoView
         }
         .navigationTitle("Info")
         .navigationBarTitleDisplayMode(.inline)

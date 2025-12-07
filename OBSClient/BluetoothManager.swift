@@ -24,10 +24,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     /// Letzte Text-/UserInput-Nachricht
     @Published var lastMessageText: String = ""
 
-    /// Vorschau wie in der Android-App
-    @Published var leftDistanceText: String = "Links: –"
-    @Published var rightDistanceText: String = "Rechts: –"
-    @Published var overtakeDistanceText: String = "Überholabstand: –"
+    /// Vorschau
+    @Published var leftDistanceText: String = "Links: "
+    @Published var rightDistanceText: String = "Rechts: "
+    @Published var overtakeDistanceText: String = "Überholabstand: "
 
     /// Letzter Median am Button-Druck
     @Published var lastMedianAtPressCm: Int?

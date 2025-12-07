@@ -53,7 +53,7 @@ struct DataExportView: View {
         ZStack {
             List {
                 // OBS-Portal-Konfiguration
-                Section("OBS-Portal") {
+                Section {
                     TextField("Basis-URL (z.B. https://meinserver)", text: $obsBaseUrl)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
@@ -63,19 +63,23 @@ struct DataExportView: View {
 
                     if obsBaseUrl.isEmpty || obsApiKey.isEmpty {
                         Text("Bitte Basis-URL und API-Key eintragen, um hochladen zu können.")
-                            .font(.caption)
+                            .font(.obsCaption)
                             .foregroundStyle(.secondary)
                     }
+                } header: {
+                    Text("OBS-Portal")
+                        .font(.obsSectionTitle)
                 }
 
                 // Dateien
-                Section("Aufnahmen") {
+                Section {
                     if files.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Keine Aufnahmen gefunden")
-                                .font(.headline)
+                                .font(.obsSectionTitle)
+
                             Text("Starte eine Aufnahme, dann erscheint hier eine .bin-Datei, die du teilen, hochladen oder löschen kannst.")
-                                .font(.footnote)
+                                .font(.obsFootnote)
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 16)
@@ -83,7 +87,7 @@ struct DataExportView: View {
                         ForEach(files) { file in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(file.name)
-                                    .font(.headline)
+                                    .font(.obsSectionTitle)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
 
@@ -91,7 +95,8 @@ struct DataExportView: View {
                                     Text(file.sizeDescription)
                                     Text(file.dateDescription)
                                 }
-                                .font(.caption)
+                                .font(.obsCaption)
+                                .monospacedDigit()
                                 .foregroundStyle(.secondary)
 
                                 HStack {
@@ -109,6 +114,11 @@ struct DataExportView: View {
                                         isShowingUploadConfirm = true
                                     } label: {
                                         Label("Hochladen", systemImage: "icloud.and.arrow.up")
+                                            .foregroundColor(
+                                                isUploading || obsBaseUrl.isEmpty || obsApiKey.isEmpty
+                                                ? .gray
+                                                : .accentColor
+                                            )
                                     }
                                     .buttonStyle(.borderless)
                                     .disabled(isUploading || obsBaseUrl.isEmpty || obsApiKey.isEmpty)
@@ -124,7 +134,7 @@ struct DataExportView: View {
                                     }
                                     .buttonStyle(.borderless)
                                 }
-                                .font(.caption)
+                                .font(.obsCaption)
                                 .padding(.top, 4)
                             }
                             .padding(.vertical, 4)
@@ -154,7 +164,14 @@ struct DataExportView: View {
                             }
                         }
                     }
+                } header: {
+                    Text("Aufnahmen")
+                        .font(.obsSectionTitle)
                 }
+            }
+            .listStyle(.insetGrouped)
+            .refreshable {
+                loadFiles()
             }
             .blur(radius: isUploading ? 1 : 0)
 
@@ -163,11 +180,15 @@ struct DataExportView: View {
                     .ignoresSafeArea()
 
                 ProgressView("Upload läuft…")
+                    .font(.obsBody)
                     .padding(24)
                     .background(.ultraThinMaterial)
                     .cornerRadius(16)
+                    .tint(.accentColor)
             }
         }
+        .font(.obsBody) // Basis-Font in dieser View
+        .disabled(isUploading) // Toolbar + Interaktion sperren während Upload
         .navigationTitle("Dateien")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -188,8 +209,8 @@ struct DataExportView: View {
                     loadFiles()
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .accessibilityLabel("Liste aktualisieren")
                 }
-                .help("Liste aktualisieren")
                 .buttonStyle(.borderless)
             }
         }
@@ -417,4 +438,9 @@ struct DataExportView: View {
         let mb = kb / 1024
         return String(format: "%.2f MB", mb)
     }
+}
+
+#Preview {
+    DataExportView()
+        .environmentObject(BluetoothManager())
 }

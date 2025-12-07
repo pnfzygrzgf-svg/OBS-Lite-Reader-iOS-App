@@ -22,63 +22,83 @@ struct ContentView: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(bt.isConnected ? "Verbunden mit OBS" : "Nicht verbunden")
-                            .font(.headline)
+                            .font(.obsSectionTitle)
 
                         Text(bt.isPoweredOn ? "Bluetooth an" : "Bluetooth AUS")
-                            .font(.subheadline)
+                            .font(.obsFootnote)
                             .foregroundStyle(bt.isPoweredOn ? .secondary : Color.red)
                     }
 
                     Spacer()
                 }
 
-                // MARK: - Sensor LINKS
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Sensor links")
-                        .font(.headline)
+                // MARK: - Messwerte-Sektion (als „Karte“)
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Messwerte")
+                        .font(.obsScreenTitle)
 
-                    Text(rawText(for: bt.leftRawCm))
-                        .font(.system(size: 22, weight: .regular, design: .monospaced))
+                    // Sensoren nebeneinander
+                    HStack(alignment: .top, spacing: 32) {
 
-                    Text(correctedText(for: bt.leftCorrectedCm))
-                        .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                        // Sensor LINKS
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sensor links")
+                                .font(.obsSectionTitle)
+
+                            Text(rawText(for: bt.leftRawCm))
+                                .font(.obsBody)
+                                .monospacedDigit()
+
+                            Text(correctedText(for: bt.leftCorrectedCm))
+                                .font(.obsValue)
+                                .monospacedDigit()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Sensor RECHTS
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sensor rechts")
+                                .font(.obsSectionTitle)
+
+                            Text(rawText(for: bt.rightRawCm))
+                                .font(.obsBody)
+                                .monospacedDigit()
+
+                            Text(correctedText(for: bt.rightCorrectedCm))
+                                .font(.obsValue)
+                                .monospacedDigit()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    // Überholabstand
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Überholabstand")
+                            .font(.obsSectionTitle)
+
+                        Text(bt.overtakeDistanceText)
+                            .font(.obsValue)
+                            .monospacedDigit()
+                    }
                 }
+                .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                // MARK: - Sensor RECHTS
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Sensor rechts")
-                        .font(.headline)
-
-                    Text(rawText(for: bt.rightRawCm))
-                        .font(.system(size: 22, weight: .regular, design: .monospaced))
-
-                    Text(correctedText(for: bt.rightCorrectedCm))
-                        .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // MARK: - Überholabstand
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Überholabstand")
-                        .font(.headline)
-
-                    Text(bt.overtakeDistanceText)
-                        .font(.system(size: 26, weight: .heavy, design: .monospaced))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial)
+                .cornerRadius(16)
 
                 // MARK: - Lenkerbreite
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Lenkerbreite")
-                        .font(.headline)
+                        .font(.obsSectionTitle)
 
                     Stepper(
-                        "\(bt.handlebarWidthCm) cm",
                         value: $bt.handlebarWidthCm,
                         in: 30...120,
                         step: 1
-                    )
+                    ) {
+                        Text("\(bt.handlebarWidthCm) cm")
+                            .monospacedDigit()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -96,7 +116,7 @@ struct ContentView: View {
                         Image(systemName: bt.isRecording ? "stop.circle.fill" : "record.circle.fill")
                         Text(bt.isRecording ? "Aufnahme stoppen" : "Aufnahme starten")
                     }
-                    .font(.headline)
+                    .font(.obsSectionTitle)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
                     .background(
@@ -109,7 +129,8 @@ struct ContentView: View {
 
             }
             .padding()
-            .navigationTitle("OBS Lite Recorder")    // kurzer Titel, der nicht abgeschnitten wird
+            .font(.obsBody) // Basis-Font für alles in dieser View
+            .navigationTitle("OBS Lite Recorder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -146,4 +167,10 @@ struct ContentView: View {
             return "Korrigiert: –"
         }
     }
+}
+
+// 👉 Preview-Bereich, außerhalb der struct
+#Preview {
+    ContentView()
+        .environmentObject(BluetoothManager())
 }
