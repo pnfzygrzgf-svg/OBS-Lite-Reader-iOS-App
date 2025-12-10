@@ -24,7 +24,7 @@ struct PortalTracksListView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .navigationTitle("Portal-Tracks")
+        .navigationTitle("Meine Portal-Tracks")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Login") {
@@ -42,7 +42,7 @@ struct PortalTracksListView: View {
                     Task { await load() }
                 }
             } else {
-                Text("Keine Portal-URL gesetzt.\nBitte im Portal-Bereich konfigurieren.")
+                Text("Keine Portal-URL gesetzt.\nBitte in den Portal-Einstellungen konfigurieren.")
                     .multilineTextAlignment(.center)
                     .padding()
             }
@@ -67,8 +67,6 @@ struct PortalTracksListView: View {
     private var tracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                
-
                 Spacer()
 
                 Button {
@@ -120,7 +118,7 @@ struct PortalTracksListView: View {
             Text("Keine Portal-URL eingetragen")
                 .font(.obsSectionTitle)
 
-            Text("Bitte im Bereich „Portal“ die Portal-URL konfigurieren.")
+            Text("Bitte in den Portal-Einstellungen die Portal-URL konfigurieren.")
                 .font(.obsFootnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -224,7 +222,7 @@ struct PortalTracksListView: View {
 
     private func load() async {
         guard !obsBaseUrl.isEmpty else {
-            errorMessage = "Portal-URL ist leer. Bitte im Bereich „Portal“ eintragen."
+            errorMessage = "Portal-URL ist leer. Bitte in den Portal-Einstellungen eintragen."
             tracks = []
             return
         }
@@ -250,7 +248,7 @@ struct PortalTracksListView: View {
 
             \(obsBaseUrl)
 
-            Bitte im Bereich „Portal“ inkl. https:// eintragen.
+            Bitte in den Portal-Einstellungen inkl. https:// eintragen.
             """
             tracks = []
         } catch PortalApiError.invalidURL {

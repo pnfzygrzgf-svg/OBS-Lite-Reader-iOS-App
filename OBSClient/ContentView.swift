@@ -32,11 +32,6 @@ struct ContentView: View {
 
                         ConnectionStatusCard()
 
-                        // Hinweise für Standortrechte / -dienste
-                        if !bt.isLocationEnabled || !bt.hasLocationAlwaysPermission {
-                            LocationPermissionHintView()
-                        }
-
                         // Hinweise für Bluetooth-Status / -rechte
                         if !bt.isPoweredOn || !bt.hasBluetoothPermission {
                             BluetoothPermissionHintView()
@@ -47,6 +42,12 @@ struct ContentView: View {
 
                         // Lenkerbreite-Einstellung
                         HandlebarWidthView(handlebarWidthCm: $bt.handlebarWidthCm)
+
+                        // Hinweis zu Standortrechten (inkl. „Immer erlauben“),
+                        // jetzt direkt unter der Lenkerbreite
+                        if !bt.isLocationEnabled || !bt.hasLocationAlwaysPermission {
+                            LocationPermissionHintView()
+                        }
 
                         Spacer(minLength: 0)
                     }
@@ -252,15 +253,29 @@ struct LocationPermissionHintView: View {
         if !bt.isLocationEnabled {
             return "Standortdienste deaktiviert"
         }
+        if !bt.hasLocationAlwaysPermission {
+            return "Hintergrund-Standort deaktiviert"
+        }
         return "Standortzugriff erforderlich"
     }
 
     /// Erklärung, warum GPS benötigt wird
     private var message: String {
         if !bt.isLocationEnabled {
-            return "Damit deine Fahrten vollständig aufgezeichnet werden können, müssen die Standortdienste (GPS) auf deinem Gerät aktiviert sein."
+            return """
+Damit deine Fahrten vollständig aufgezeichnet werden können, müssen die Standortdienste (GPS) auf deinem Gerät aktiviert sein.
+Aktiviere sie in den iOS-Einstellungen unter „Datenschutz & Sicherheit > Ortungsdienste“.
+"""
         }
-        return "Damit deine Fahrten vollständig aufgezeichnet werden können, muss die Standortfreigabe für diese App auf „Immer erlauben“ gestellt sein."
+
+        // Fall: Standortdienste an, aber nur „Beim Verwenden erlaubt“
+        return """
+Damit deine Fahrten auch bei ausgeschaltetem Bildschirm und im Hintergrund aufgezeichnet werden können, braucht diese App „Immer“ Zugriff auf deinen Standort.
+
+Tippe unten auf „Einstellungen öffnen“ und stelle unter
+„Ortungsdienste > OBS Lite Recorder > Zugriff auf Standort“
+die Option auf „Immer“.
+"""
     }
 }
 

@@ -225,7 +225,7 @@ struct DataExportView: View {
                     .font(.obsSectionTitle)
             }
 
-            Text("Um Fahrten direkt ins OBS-Portal hochzuladen, bitte im Bereich „Portal“ (Tab unten) die Portal-URL und den API-Key eintragen.")
+            Text("Um Fahrten direkt ins OBS-Portal hochzuladen, bitte im Bereich Aufzeichnungen, Portal-Einstellungen die Portal-URL und den API-Key eintragen.")
                 .font(.obsFootnote)
                 .foregroundStyle(.secondary)
         }
