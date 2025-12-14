@@ -24,7 +24,7 @@ struct PortalHomeView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .navigationTitle("Aufzeichnungen")
+        .navigationTitle("OBS-Portal")
     }
 
     /// Navigation zu den Bereichen:
@@ -42,9 +42,9 @@ struct PortalHomeView: View {
                     Image(systemName: "folder")
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Fahrten & Upload")
+                        Text("Fahrten ins OBS-Portal hochladen")
                             .font(.obsSectionTitle)
-                        Text("Aufgezeichnete Fahrten verwalten und ins Portal hochladen.")
+                        Text("Aufgezeichnete Fahrten verwalten und hochladen.")
                             .font(.obsFootnote)
                             .foregroundStyle(.secondary)
                     }
@@ -63,9 +63,9 @@ struct PortalHomeView: View {
                     Image(systemName: "list.bullet.rectangle")
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Fahrtaufzeichnungen im Portal")
+                        Text("Fahrten im OBS-Portal")
                             .font(.obsSectionTitle)
-                        Text("Meine Fahrten ansehen, die im OBS-Portal gespeichert sind.")
+                        Text("Im Portal gespeicherte Fahrten ansehen und öffnen.")
                             .font(.obsFootnote)
                             .foregroundStyle(.secondary)
                     }

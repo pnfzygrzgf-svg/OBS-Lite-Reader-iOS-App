@@ -16,6 +16,16 @@ struct PortalTracksListView: View {
 
             ScrollView {
                 VStack(spacing: 24) {
+
+                    // ✅ Untertitel-Header im Content (ohne extra Titel)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Im Portal gespeicherte Fahrten ansehen. Sortiert nach Fahrtdatum (neueste zuerst).")
+                            .font(.obsFootnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     tracksSection
                 }
                 .padding(.horizontal, 16)
@@ -24,7 +34,7 @@ struct PortalTracksListView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .navigationTitle("Meine Aufzeichnungen")
+        .navigationTitle("Fahrten im OBS-Portal")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Login") {
@@ -218,6 +228,33 @@ struct PortalTracksListView: View {
         }
     }
 
+    // MARK: - Datum Parsing (Portal-Format)
+
+    private enum PortalDate {
+        // recordedAt: "2025-04-28T11:58:04+0000"
+        // createdAt:  "2025-10-29T06:37:54.640779+0000" (hat Mikrosekunden)
+
+        private static let dfWithFraction: DateFormatter = {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
+            return df
+        }()
+
+        private static let dfNoFraction: DateFormatter = {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+            return df
+        }()
+
+        static func parse(_ s: String) -> Date {
+            if let d = dfWithFraction.date(from: s) { return d }
+            if let d = dfNoFraction.date(from: s) { return d }
+            return .distantPast
+        }
+    }
+
     // MARK: - Laden der eigenen Tracks (Feed)
 
     private func load() async {
@@ -234,9 +271,13 @@ struct PortalTracksListView: View {
         do {
             let client = PortalApiClient(baseUrl: obsBaseUrl)
             let result = try await client.fetchMyTracks(limit: 20)
-            tracks = result.tracks
-            errorMessage = nil
 
+            // ✅ Sortierung nach recordedAt: neueste Fahrt zuerst
+            tracks = result.tracks.sorted {
+                PortalDate.parse($0.recordedAt) > PortalDate.parse($1.recordedAt)
+            }
+
+            errorMessage = nil
             print("PortalTracksListView: \(result.tracks.count) Tracks geladen")
         } catch let PortalApiError.httpError(status, body) where status == 401 {
             print("PortalTracksListView: 401 Unauthorized – Body: \(body)")

@@ -146,7 +146,7 @@ struct DataExportView: View {
                 .transition(.opacity)
             }
         }
-        .navigationTitle("Fahrtaufzeichnungen")
+        .navigationTitle("Fahrten auf dem Gerät")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(role: .destructive) {
