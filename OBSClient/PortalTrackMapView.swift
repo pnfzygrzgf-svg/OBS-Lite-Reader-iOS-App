@@ -1,29 +1,23 @@
+// PortalTrackMapView.swift
 import SwiftUI
 import MapKit
 
-/// Einfaches Modell für einen Überholvorgang zur Darstellung auf der Karte.
 struct OvertakeEvent: Identifiable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
     let distance: Double?
 }
 
-/// SwiftUI-Wrapper um MKMapView, der
-/// - eine Route als Polyline zeichnet
-/// - Überholvorgänge als farbige Marker anzeigt
 struct PortalTrackMapView: UIViewRepresentable {
     let route: [CLLocationCoordinate2D]
     let events: [OvertakeEvent]
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
 
-        // Ruhigere Karte, ohne POIs
         map.mapType = .mutedStandard
         map.pointOfInterestFilter = .excludingAll
 
@@ -34,16 +28,13 @@ struct PortalTrackMapView: UIViewRepresentable {
     }
 
     func updateUIView(_ map: MKMapView, context: Context) {
-        // Alte Inhalte entfernen
         map.removeOverlays(map.overlays)
         map.removeAnnotations(map.annotations)
 
-        // Route einzeichnen
         if !route.isEmpty {
             let polyline = MKPolyline(coordinates: route, count: route.count)
             map.addOverlay(polyline)
 
-            // Kartenausschnitt an Route + Events anpassen
             var rect = polyline.boundingMapRect
 
             if !events.isEmpty {
@@ -59,17 +50,13 @@ struct PortalTrackMapView: UIViewRepresentable {
             map.setVisibleMapRect(rect, edgePadding: padding, animated: false)
         }
 
-        // Events als Marker
         for event in events {
             let annotation = OvertakeAnnotation(event: event)
             map.addAnnotation(annotation)
         }
     }
 
-    // MARK: - Coordinator
-
     class Coordinator: NSObject, MKMapViewDelegate {
-
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let polyline = overlay as? MKPolyline else {
                 return MKOverlayRenderer(overlay: overlay)
@@ -78,14 +65,12 @@ struct PortalTrackMapView: UIViewRepresentable {
             let renderer = MKPolylineRenderer(polyline: polyline)
             renderer.lineWidth = 3.0
             renderer.strokeColor = UIColor.systemPink
-            renderer.lineDashPattern = [4, 2]   // leicht gestrichelt
+            renderer.lineDashPattern = [4, 2]
             return renderer
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let ann = annotation as? OvertakeAnnotation else {
-                return nil
-            }
+            guard let ann = annotation as? OvertakeAnnotation else { return nil }
 
             let identifier = "overtake"
             let view: MKMarkerAnnotationView
@@ -98,13 +83,7 @@ struct PortalTrackMapView: UIViewRepresentable {
                 view.canShowCallout = true
             }
 
-            // Farbcodeierung nach Abstand
             if let distance = ann.event.distance {
-                // 0–1.10 m: dunkelrot
-                // 1.11–1.30 m: rot
-                // 1.31–1.50 m: gelb
-                // 1.51–1.70 m: grün
-                // ab 1.71 m: dunkelgrün
                 if distance <= 1.10 {
                     view.markerTintColor = UIColor(red: 0.6, green: 0.0, blue: 0.0, alpha: 1.0)
                 } else if distance <= 1.30 {
@@ -119,7 +98,6 @@ struct PortalTrackMapView: UIViewRepresentable {
 
                 view.glyphText = String(format: "%.2f", distance)
             } else {
-                // kein Abstand vorhanden → neutral
                 view.markerTintColor = .systemGray
                 view.glyphText = "–"
             }
@@ -129,7 +107,6 @@ struct PortalTrackMapView: UIViewRepresentable {
     }
 }
 
-// MKAnnotation-Wrapper für einen OvertakeEvent
 final class OvertakeAnnotation: NSObject, MKAnnotation {
     let event: OvertakeEvent
     dynamic var coordinate: CLLocationCoordinate2D

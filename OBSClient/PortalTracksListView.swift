@@ -1,7 +1,7 @@
+// PortalTracksListView.swift
 import SwiftUI
 
 struct PortalTracksListView: View {
-
     @AppStorage("obsBaseUrl") private var obsBaseUrl: String = ""
 
     @State private var tracks: [PortalTrackSummary] = []
@@ -10,42 +10,27 @@ struct PortalTracksListView: View {
     @State private var showingLogin = false
 
     var body: some View {
-        ZStack {
-            Color(.systemGroupedBackground)
-                .ignoresSafeArea()
-
-            ScrollView {
-                VStack(spacing: 24) {
-
-                    // Untertitel-Header im Content (ohne extra Titel)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Im Portal gespeicherte Fahrten ansehen. Sortiert nach Fahrtdatum (neueste zuerst).")
-                            .font(.obsFootnote)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    tracksSection
+        GroupedScrollScreen {
+            VStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Im Portal gespeicherte Fahrten ansehen. Sortiert nach Fahrtdatum (neueste zuerst).")
+                        .font(.obsFootnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                tracksSection
             }
-            .scrollIndicators(.hidden)
         }
         .navigationTitle("Fahrten im OBS-Portal")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Login") {
-                    showingLogin = true
-                }
-                .disabled(obsBaseUrl.isEmpty)
+                Button("Login") { showingLogin = true }
+                    .disabled(obsBaseUrl.isEmpty)
             }
         }
-        .task {
-            await load()
-        }
+        .task { await load() }
         .sheet(isPresented: $showingLogin) {
             if !obsBaseUrl.isEmpty {
                 PortalLoginView(baseUrl: obsBaseUrl) {
@@ -64,9 +49,7 @@ struct PortalTracksListView: View {
                 set: { if !$0 { errorMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) {
-                errorMessage = nil
-            }
+            Button("OK", role: .cancel) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
         }
@@ -78,7 +61,6 @@ struct PortalTracksListView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Spacer()
-
                 Button {
                     Task { await load() }
                 } label: {
@@ -101,7 +83,6 @@ struct PortalTracksListView: View {
                 emptyTracksCard
                     .obsCardStyle()
             } else {
-                // kleiner Hinweis zum Login (hier nochmal kurz)
                 loginHintInline
                     .obsCardStyle()
 
@@ -164,7 +145,6 @@ struct PortalTracksListView: View {
         .padding(.vertical, 8)
     }
 
-    /// Kurz-Hinweis, dass der Login über den Button oben rechts läuft
     private var loginHintInline: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -190,11 +170,13 @@ struct PortalTracksListView: View {
     }
 
     private func trackCard(for track: PortalTrackSummary) -> some View {
-        NavigationLink {
+        let title = track.title.obsDisplayText(or: "(ohne Titel)")
+
+        return NavigationLink {
             PortalTrackDetailView(baseUrl: obsBaseUrl, track: track)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
-                Text(track.title?.isEmpty == false ? track.title! : "(ohne Titel)")
+                Text(title)
                     .font(.obsSectionTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -205,7 +187,7 @@ struct PortalTracksListView: View {
 
                 HStack(spacing: 12) {
                     Text(String(format: "Länge: %.2f km", track.length / 1000.0))
-                    Text("Dauer: \(formattedDuration(track.duration))")
+                    Text("Dauer: \(DurationText.format(track.duration))")
                     Text("Events: \(track.numEvents)")
                 }
                 .font(.obsCaption)
@@ -217,23 +199,9 @@ struct PortalTracksListView: View {
         .buttonStyle(.plain)
     }
 
-    private func formattedDuration(_ seconds: Double) -> String {
-        let s = Int(seconds)
-        let hours = s / 3600
-        let minutes = (s % 3600) / 60
-        if hours > 0 {
-            return "\(hours) h \(minutes) min"
-        } else {
-            return "\(minutes) min"
-        }
-    }
-
     // MARK: - Datum Parsing (Portal-Format)
 
     private enum PortalDate {
-        // recordedAt: "2025-04-28T11:58:04+0000"
-        // createdAt:  "2025-10-29T06:37:54.640779+0000" (hat Mikrosekunden)
-
         private static let dfWithFraction: DateFormatter = {
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
@@ -255,7 +223,7 @@ struct PortalTracksListView: View {
         }
     }
 
-    // MARK: - Laden der eigenen Tracks (Feed)
+    // MARK: - Laden
 
     private func load() async {
         guard !obsBaseUrl.isEmpty else {
@@ -272,7 +240,6 @@ struct PortalTracksListView: View {
             let client = PortalApiClient(baseUrl: obsBaseUrl)
             let result = try await client.fetchMyTracks(limit: 20)
 
-            // ✅ Sortierung nach recordedAt: neueste Fahrt zuerst
             tracks = result.tracks.sorted {
                 PortalDate.parse($0.recordedAt) > PortalDate.parse($1.recordedAt)
             }
