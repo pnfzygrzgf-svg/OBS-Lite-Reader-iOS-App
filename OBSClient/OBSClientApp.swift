@@ -1,3 +1,5 @@
+// OBSClientApp.swift
+
 import SwiftUI
 
 /// Einstiegspunkt der App (SwiftUI-App-Lifecycle).

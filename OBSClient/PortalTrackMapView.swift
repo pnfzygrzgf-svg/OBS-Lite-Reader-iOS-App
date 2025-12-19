@@ -1,4 +1,5 @@
 // PortalTrackMapView.swift
+
 import SwiftUI
 import MapKit
 
@@ -19,6 +20,11 @@ struct OvertakeEvent: Identifiable {
 /// Zeichnet:
 /// - eine Route als Polyline
 /// - Event-Marker als Annotationen
+///
+/// OPTIK-UPDATE:
+/// - Route als systemBlue (statt Pink) + etwas weicher (alpha)
+/// - Marker: klarere Farb-Skala + glyphText bleibt Distanz
+/// - Callout mit sauberem Title
 struct PortalTrackMapView: UIViewRepresentable {
 
     /// Route als Liste von Koordinaten (Polyline)
@@ -117,11 +123,11 @@ struct PortalTrackMapView: UIViewRepresentable {
             // Linienbreite in Punkten
             renderer.lineWidth = 3.0
 
-            // >>> HIER wird die Linienfarbe festgelegt <<<
-            renderer.strokeColor = UIColor.systemPink
+            // Optik: systemBlue statt Pink (passt besser zu iOS)
+            renderer.strokeColor = UIColor.systemBlue.withAlphaComponent(0.85)
 
-            // Gestrichelte Linie: [Strichlänge, Lücke, Strichlänge, Lücke, ...]
-            renderer.lineDashPattern = [4, 2]
+            // Optional: leichte Strichelung (wirkt "GPS-ish")
+            renderer.lineDashPattern = [6, 3]
 
             return renderer
         }
@@ -148,22 +154,18 @@ struct PortalTrackMapView: UIViewRepresentable {
 
             // Marker-Farbe & Glyph je nach Abstand (distance) festlegen
             if let distance = ann.event.distance {
-                // Farbskala nach „kritisch“ → „ok“ (Grenzen frei definierbar)
+                // Farbskala nach „kritisch“ → „ok“
+                // (Schwellenwerte in Metern)
                 if distance <= 1.10 {
-                    // sehr kritisch (dunkelrot)
-                    view.markerTintColor = UIColor(red: 0.6, green: 0.0, blue: 0.0, alpha: 1.0)
+                    view.markerTintColor = UIColor.systemRed
                 } else if distance <= 1.30 {
-                    // kritisch (rot)
-                    view.markerTintColor = .systemRed
+                    view.markerTintColor = UIColor.systemOrange
                 } else if distance <= 1.50 {
-                    // grenzwertig (gelb)
-                    view.markerTintColor = .systemYellow
+                    view.markerTintColor = UIColor.systemYellow
                 } else if distance <= 1.70 {
-                    // ok (grün)
-                    view.markerTintColor = .systemGreen
+                    view.markerTintColor = UIColor.systemGreen
                 } else {
-                    // sehr ok (dunkelgrün)
-                    view.markerTintColor = UIColor(red: 0.0, green: 0.4, blue: 0.0, alpha: 1.0)
+                    view.markerTintColor = UIColor.systemGreen.withAlphaComponent(0.8)
                 }
 
                 // Text im Marker (Glyph) – hier: Distanz mit 2 Nachkommastellen

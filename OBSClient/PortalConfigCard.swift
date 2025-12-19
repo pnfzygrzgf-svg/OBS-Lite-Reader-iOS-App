@@ -1,10 +1,22 @@
 // PortalConfigCard.swift
+
 import SwiftUI
 
 /// Konfigurationskarte für das OBS-Portal:
 /// - Portal-URL + API-Key erfassen
 /// - Werte werden erst nach Tippen auf „Speichern“ übernommen
 /// - Beispiel-URL erscheint nur als Placeholder (sekundäre Farbe)
+///
+/// OPTIK-UPDATE:
+/// - klarer Header mit Status-Chip (V2)
+/// - ruhige Labels + bessere Field-Optik
+/// - Save-Button als eindeutige Primary Action
+///
+/// TECH-FIX:
+/// - nutzt V2-Komponenten, um Kollisionen/“ambiguous“ Fehler zu vermeiden:
+///   - OBSSectionHeaderV2 statt OBSSectionHeader
+///   - OBSStatusChipV2 statt OBSStatusChip
+///   - obsCardStyleV2() statt obsCardStyle()
 struct PortalConfigCardView: View {
 
     // Persistierte (gespeicherte) Werte
@@ -46,28 +58,26 @@ struct PortalConfigCardView: View {
         return true
     }
 
+    /// Status-Chip Text/Style auf Basis des gespeicherten Zustands.
+    private var statusChip: (text: String, style: OBSStatusChipV2.Style) {
+        if isSavedConfigured { return ("Bereit", .success) }
+        return ("Nicht eingerichtet", .warning)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
 
             // Kopfzeile: zeigt Status des *gespeicherten* Zustands
-            HStack(spacing: 8) {
-                Image(systemName: isSavedConfigured
-                      ? "checkmark.seal.fill"
-                      : "exclamationmark.triangle.fill")
-                    .foregroundStyle(isSavedConfigured ? .green : .orange)
-
-                Text("OBS-Portal")
-                    .font(.obsScreenTitle)
+            HStack(alignment: .top, spacing: 12) {
+                OBSSectionHeaderV2(
+                    "OBS-Portal",
+                    subtitle: "Portal-URL und API-Key werden lokal gespeichert."
+                )
 
                 Spacer()
-            }
 
-            // Status-Text (ebenfalls bezogen auf den gespeicherten Zustand)
-            Text(isSavedConfigured
-                 ? "OBS-Portal ist bereit zum Hochladen."
-                 : "OBS-Portal ist noch nicht vollständig eingerichtet.")
-            .font(.obsCaption)
-            .foregroundStyle(.secondary)
+                OBSStatusChipV2(text: statusChip.text, style: statusChip.style)
+            }
 
             // Hinweis, wenn der User etwas geändert hat, aber noch nicht gespeichert
             if hasUnsavedChanges {
@@ -76,17 +86,19 @@ struct PortalConfigCardView: View {
                     .foregroundStyle(.orange)
             }
 
+            Divider()
+
             // Portal-URL Eingabe
             VStack(alignment: .leading, spacing: 8) {
                 Text("Portal-URL")
-                    .font(.obsFootnote)
+                    .font(.obsCaption)
                     .foregroundStyle(.secondary)
 
                 TextField(
                     "",
                     text: $draftBaseUrl,
                     prompt: Text(exampleBaseUrl)
-                        .foregroundStyle(.secondary) // <- nicht blau, sondern sekundär
+                        .foregroundStyle(.secondary)
                 )
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
@@ -98,7 +110,7 @@ struct PortalConfigCardView: View {
             // API-Key Eingabe
             VStack(alignment: .leading, spacing: 8) {
                 Text("API-Key")
-                    .font(.obsFootnote)
+                    .font(.obsCaption)
                     .foregroundStyle(.secondary)
 
                 SecureField("API-Key eintragen", text: $draftApiKey)
@@ -114,13 +126,14 @@ struct PortalConfigCardView: View {
             }
 
             // Speichern-Button + Feedback
-            HStack {
+            HStack(spacing: 12) {
                 Spacer()
 
                 Button {
                     save()
                 } label: {
                     Label("Speichern", systemImage: "square.and.arrow.down")
+                        .font(.obsBody.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!isDraftValid || !hasUnsavedChanges)
@@ -132,7 +145,7 @@ struct PortalConfigCardView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .obsCardStyle()
+        .obsCardStyleV2()
         .onAppear {
             // Draft-Werte beim Erscheinen mit den gespeicherten Werten initialisieren
             draftBaseUrl = savedBaseUrl

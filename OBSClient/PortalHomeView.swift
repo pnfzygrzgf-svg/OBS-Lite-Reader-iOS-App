@@ -9,14 +9,23 @@ import SwiftUI
 /// 1) Fahrtaufzeichnungen & Upload
 /// 2) Meine Portal-Tracks
 /// 3) Portal-Einstellungen (Portal-URL, API-Key, Login-Hilfe)
+///
+/// OPTIK-UPDATE:
+/// - echte „Kacheln“ (Row Cards) mit Chevron
+/// - konsistente Section Header (V2)
+/// - ruhiges Spacing + Inset-Grouped Hintergrund
+///
+/// TECH-FIX:
+/// - nutzt V2-Komponenten, um Redeclaration/Ambiguous-Probleme zu vermeiden:
+///   - OBSSectionHeaderV2 statt OBSSectionHeader
+///   - OBSRowCardV2 statt OBSRowCard
 struct PortalHomeView: View {
 
     var body: some View {
-        // ZStack, damit wir einen Hintergrund unter den Scroll-Inhalt legen können
         ZStack {
             // Hintergrundfarbe passend zu iOS "Grouped" Tabellen/Listen
             Color(.systemGroupedBackground)
-                .ignoresSafeArea() // Hintergrund soll auch unter Safe Areas (Notch/Home Indicator) gehen
+                .ignoresSafeArea()
 
             // ScrollView, damit der Inhalt auch auf kleinen Geräten nicht abgeschnitten wird
             ScrollView {
@@ -26,7 +35,7 @@ struct PortalHomeView: View {
                 }
                 // Außenabstände der gesamten Inhalte
                 .padding(.horizontal, 16)
-                .padding(.top, 16)
+                .padding(.top, 12)
                 .padding(.bottom, 32)
             }
             // Optional: Scroll-Indikatoren ausblenden für "cleaner" UI
@@ -34,6 +43,7 @@ struct PortalHomeView: View {
         }
         // Titel in der NavigationBar (setzt voraus, dass die View in einem NavigationStack steckt)
         .navigationTitle("OBS-Portal")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     /// Enthält die drei Navigationskacheln.
@@ -44,86 +54,49 @@ struct PortalHomeView: View {
     private var navigationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
 
+            OBSSectionHeaderV2(
+                "Aufzeichnungen",
+                subtitle: "Fahrten hochladen, ansehen und Portal konfigurieren."
+            )
+
             // 1) Fahrtaufzeichnungen & Upload
-            //
-            // NavigationLink: Beim Tippen wird DataExportView geöffnet.
-            // Label: Eine "Kachel" mit Icon + Titel + Beschreibung.
             NavigationLink {
                 DataExportView()
             } label: {
-                HStack(spacing: 12) {
-                    // Icon links
-                    Image(systemName: "folder")
-                        .font(.title3)
-
-                    // Textblock rechts vom Icon
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Fahrten ins OBS-Portal hochladen")
-                            .font(.obsSectionTitle)
-                        Text("Aufgezeichnete Fahrten verwalten und hochladen.")
-                            .font(.obsFootnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    // Spacer sorgt dafür, dass der Inhalt links bleibt
-                    Spacer()
-                }
-                // Kachel soll die ganze verfügbare Breite einnehmen,
-                // der Inhalt bleibt dabei linksbündig
-                .frame(maxWidth: .infinity, alignment: .leading)
+                OBSRowCardV2(
+                    icon: "folder",
+                    title: "Fahrten ins OBS-Portal hochladen",
+                    subtitle: "Aufgezeichnete Fahrten verwalten und hochladen."
+                )
             }
-            // Plain: verhindert das standardmäßige Link-Styling (z.B. blau, Highlight)
             .buttonStyle(.plain)
-            // Custom Card-Style aus deinem Projekt (z.B. Hintergrund, Padding, CornerRadius, Shadow)
-            .obsCardStyle()
+            .obsCardStyleV2()
 
             // 2) Meine Portal-Tracks
-            //
-            // Öffnet PortalTracksListView (Liste der im Portal gespeicherten Fahrten)
             NavigationLink {
                 PortalTracksListView()
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "list.bullet.rectangle")
-                        .font(.title3)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Fahrten im OBS-Portal")
-                            .font(.obsSectionTitle)
-                        Text("Im Portal gespeicherte Fahrten ansehen und öffnen.")
-                            .font(.obsFootnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                OBSRowCardV2(
+                    icon: "list.bullet.rectangle",
+                    title: "Fahrten im OBS-Portal",
+                    subtitle: "Im Portal gespeicherte Fahrten ansehen und öffnen."
+                )
             }
             .buttonStyle(.plain)
-            .obsCardStyle()
+            .obsCardStyleV2()
 
             // 3) Portal-Einstellungen
-            //
-            // Öffnet PortalSettingsView (Portal-URL, API-Key, Login-Hinweise)
             NavigationLink {
                 PortalSettingsView()
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "gearshape")
-                        .font(.title3)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Portal-Einstellungen")
-                            .font(.obsSectionTitle)
-                        Text("Portal-URL, API-Key und Login-Hinweise verwalten.")
-                            .font(.obsFootnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                OBSRowCardV2(
+                    icon: "gearshape",
+                    title: "Portal-Einstellungen",
+                    subtitle: "Portal-URL, API-Key und Login-Hinweise verwalten."
+                )
             }
             .buttonStyle(.plain)
-            .obsCardStyle()
+            .obsCardStyleV2()
         }
     }
 }

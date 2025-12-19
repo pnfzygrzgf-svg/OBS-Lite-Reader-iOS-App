@@ -1,3 +1,5 @@
+// Haptics.swift
+
 import UIKit
 
 /// Zentraler Helfer für haptisches Feedback (Vibrationen) in der App.
@@ -9,6 +11,9 @@ import UIKit
 /// Warum @MainActor?
 /// - UIKit-Feedback-Generatoren sollten auf dem Main Thread benutzt werden.
 /// - So verhindert der Compiler/Runtime falsche Thread-Nutzung.
+///
+/// OPTIK-HINWEIS:
+/// - Haptics selbst hat keine UI-Optik, bleibt aber als Teil des "UI Feel" wichtig.
 @MainActor
 final class Haptics {
 

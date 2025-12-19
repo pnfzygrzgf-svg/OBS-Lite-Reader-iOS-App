@@ -1,81 +1,151 @@
-// PortalTracksListView.swift
 import SwiftUI
 
-/// Liste „Meine Portal-Tracks“
+/// PortalTracksListView
 ///
-/// Aufgaben dieser View:
-/// - Lädt die eigenen Tracks aus dem OBS-Portal (API)
-/// - Sortiert nach Fahrtdatum (neueste zuerst)
-/// - Zeigt Zustände an: keine Portal-URL / lädt / leer / Liste
-/// - Bietet „Login“-Button (öffnet WebView-Login)
+/// Warum diese Variante (List) flüssig läuft:
+/// - `List` ist intern stark optimiert (Cell-Reuse/Virtualisierung/Prefetching)
+/// - Im Gegensatz zu `ScrollView + VStack` muss SwiftUI nicht alles sofort layouten
+/// - Gerade mit „Card“-Styles (Shadow/Background/Overlay) ist `List` meist deutlich performanter
 struct PortalTracksListView: View {
 
-    // Portal-URL wird aus AppStorage gelesen (zentral konfiguriert in PortalConfigCard)
+    // Portal-Base-URL (kommt aus AppStorage; wird in den Portal-Einstellungen gesetzt)
     @AppStorage("obsBaseUrl") private var obsBaseUrl: String = ""
 
-    // Geladene Tracks (Kurzfassung/Summary)
+    // Datenquelle: geladene Track-Summaries
     @State private var tracks: [PortalTrackSummary] = []
 
-    // Lade- und Fehlerzustände
+    // UI-States
     @State private var isLoading = false
     @State private var errorMessage: String?
-
-    // Steuert das Sheet für die Login-WebView
     @State private var showingLogin = false
 
     var body: some View {
-        // Gruppierter Screen-Hintergrund (Custom Container in deinem Projekt)
-        GroupedScrollScreen {
-            VStack(spacing: 24) {
+        // ✅ List: performant für lange/komplexe Listen
+        List {
 
-                // Kurze Einleitung oberhalb der Liste
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Im Portal gespeicherte Fahrten ansehen. Sortiert nach Fahrtdatum (neueste zuerst).")
-                        .font(.obsFootnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true) // Text darf umbrechen
+            // MARK: - Einleitung
+            Section {
+                Text("Im Portal gespeicherte Fahrten ansehen. Sortiert nach Fahrtdatum (neueste zuerst).")
+                    .font(.obsFootnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)   // verhindert unschöne Abschneideeffekte
+                    .listRowBackground(Color.clear)                 // damit Hintergrund „grouped“ wirkt
+            }
+
+            // MARK: - Actions (Reload)
+            Section {
+                HStack {
+                    Spacer()
+
+                    Button {
+                        // Reload bewusst in Task, weil load() async ist
+                        Task { await load() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Neu laden")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isLoading || obsBaseUrl.isEmpty) // nicht spammen, und ohne URL sinnlos
+
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .listRowBackground(Color.clear)
+            }
 
-                // Bereich mit Reload-Button + Karten/Liste
-                tracksSection
+            // MARK: - Inhalt je nach Zustand
+            //
+            // Zustände:
+            // 1) keine Portal-URL
+            // 2) lädt und noch keine Daten
+            // 3) leer (keine Tracks)
+            // 4) Liste mit Tracks (+ optional Loading-Row beim Refresh)
+            if obsBaseUrl.isEmpty {
+                noBaseUrlCard
+                    .listRowSeparator(.hidden) // Card-Look: keine Trennlinie
+
+            } else if isLoading && tracks.isEmpty {
+                loadingCard
+                    .listRowSeparator(.hidden)
+
+            } else if tracks.isEmpty {
+                emptyTracksCard
+                    .listRowSeparator(.hidden)
+
+            } else {
+                // Hinweis-Card oben
+                loginHintInline
+                    .listRowSeparator(.hidden)
+
+                // Optional: „Aktualisiere…“ nur sichtbar, wenn schon Daten da sind
+                if isLoading {
+                    loadingInlineRow
+                        .listRowSeparator(.hidden)
+                }
+
+                // ✅ ForEach in List:
+                // - List kümmert sich um Performance (Recycling etc.)
+                // - NavigationLink pro Row ist der „Standardweg“
+                ForEach(tracks) { track in
+                    NavigationLink {
+                        // Detailansicht
+                        PortalTrackDetailView(baseUrl: obsBaseUrl, track: track)
+                    } label: {
+                        // Row-Content bewusst „leicht“ halten:
+                        // - keine schweren Effekte in der Row selbst (Blur, riesige Shadows etc.)
+                        // - Styling macht obsCardStyleV2() außen
+                        PortalTrackRowContent(track: track)
+                    }
+                    .listRowSeparator(.hidden)
+                }
             }
         }
+        // MARK: - List Styling
+        .listStyle(.insetGrouped)                  // optisch wie Settings
+        .scrollContentBackground(.hidden)          // wir setzen den Hintergrund selbst
+        .background(Color(.systemGroupedBackground))
+
+        // MARK: - Navigation
         .navigationTitle("Fahrten im OBS-Portal")
+        .navigationBarTitleDisplayMode(.inline)
 
-        // Toolbar: Login-Button oben rechts
+        // MARK: - Toolbar (Login)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                // Login nur möglich, wenn eine Portal-URL vorhanden ist
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("Login") { showingLogin = true }
-                    .disabled(obsBaseUrl.isEmpty)
+                    .disabled(obsBaseUrl.isEmpty) // ohne Portal-URL kein Login
             }
         }
 
-        // Beim Erscheinen automatisch laden
+        // MARK: - Initial Load
+        // Lädt beim ersten Anzeigen.
+        // Hinweis: Wenn die View oft neu erscheint (z.B. Tabwechsel), kann das mehrfach feuern.
+        // Falls das störend ist: mit zusätzlichem Flag „didLoadOnce“ absichern.
         .task { await load() }
 
-        // Login-Sheet: zeigt PortalLoginView oder Hinweis wenn keine URL gesetzt ist
+        // MARK: - Login Sheet
         .sheet(isPresented: $showingLogin) {
             if !obsBaseUrl.isEmpty {
-                // Nach „Fertig“ im Login: Cookies sync + dann hier erneut laden
+                // PortalLoginView ruft Callback nach erfolgreichem Login
                 PortalLoginView(baseUrl: obsBaseUrl) {
+                    // danach direkt neu laden
                     Task { await load() }
                 }
             } else {
-                // Fallback: falls obsBaseUrl leer ist, obwohl Login-Sheet geöffnet wurde
+                // Fallback: sollte wegen disabled kaum vorkommen
                 Text("Keine Portal-URL gesetzt.\nBitte in den Portal-Einstellungen konfigurieren.")
                     .multilineTextAlignment(.center)
                     .padding()
             }
         }
 
-        // Fehler-Alert (sichtbar, wenn errorMessage != nil)
+        // MARK: - Fehler Alert
         .alert(
             "Fehler",
             isPresented: Binding(
                 get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } } // beim Schließen zurücksetzen
+                set: { if !$0 { errorMessage = nil } }
             )
         ) {
             Button("OK", role: .cancel) { errorMessage = nil }
@@ -84,90 +154,34 @@ struct PortalTracksListView: View {
         }
     }
 
-    // MARK: - UI
+    // MARK: - Cards / Content
+    //
+    // Diese Cards bekommen alle obsCardStyleV2()
+    // Wichtig für Performance:
+    // - Vermeide in obsCardStyleV2() teure Effekte (Material/Blur, große Shadows, Masking)
+    // - Gerade in Listen kann das Scrollen sonst wieder ruckeln
 
-    /// Hauptbereich unterhalb der Einleitung:
-    /// - Reload-Button
-    /// - Zustandskarten (keine URL / lädt / leer)
-    /// - oder Liste der Tracks
-    private var tracksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-
-            // Oben rechts: „Neu laden“-Button
-            HStack {
-                Spacer()
-                Button {
-                    // Async-Ladevorgang erneut starten
-                    Task { await load() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Neu laden")
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                // Disabled, wenn gerade geladen wird oder keine Portal-URL gesetzt ist
-                .disabled(isLoading || obsBaseUrl.isEmpty)
-            }
-
-            // Zustände der UI:
-            // 1) keine Portal-URL → Hinweis anzeigen
-            // 2) lädt und noch keine Daten → Ladekarte anzeigen
-            // 3) fertig, aber leer → Leerzustand anzeigen
-            // 4) Daten vorhanden → Login-Hinweis + Liste
-            if obsBaseUrl.isEmpty {
-                noBaseUrlCard
-                    .obsCardStyle()
-            } else if isLoading && tracks.isEmpty {
-                loadingCard
-                    .obsCardStyle()
-            } else if tracks.isEmpty {
-                emptyTracksCard
-                    .obsCardStyle()
-            } else {
-                // Hinweis: ggf. im Portal einloggen, wenn wenig angezeigt wird
-                loginHintInline
-                    .obsCardStyle()
-
-                // Track-Liste als „Cards“
-                VStack(spacing: 12) {
-
-                    // Wenn währenddessen neu geladen wird, kurze Inline-Progresszeile
-                    if isLoading {
-                        loadingInlineRow
-                    }
-
-                    // Für jeden Track eine tappbare Karte (NavigationLink zum Detail)
-                    ForEach(tracks) { track in
-                        trackCard(for: track)
-                            .obsCardStyle()
-                    }
-                }
-            }
-        }
-    }
-
-    /// Karte: Portal-URL fehlt
     private var noBaseUrlCard: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 32))
                 .foregroundStyle(.orange)
 
-            Text("Keine Portal-URL eingetragen")
-                .font(.obsSectionTitle)
+            OBSSectionHeaderV2(
+                "Keine Portal-URL eingetragen",
+                subtitle: "Bitte in den Portal-Einstellungen konfigurieren."
+            )
 
-            Text("Bitte in den Portal-Einstellungen die Portal-URL konfigurieren.")
+            Text("Ohne Portal-URL können keine Tracks geladen werden.")
                 .font(.obsFootnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
+        .obsCardStyleV2()
     }
 
-    /// Karte: Initialer Ladezustand (wenn Liste noch leer ist)
     private var loadingCard: some View {
         HStack(spacing: 12) {
             ProgressView()
@@ -175,28 +189,30 @@ struct PortalTracksListView: View {
                 .font(.obsBody)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .obsCardStyleV2()
     }
 
-    /// Karte: keine Tracks vorhanden
     private var emptyTracksCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "bicycle")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
-            Text("Keine Tracks gefunden")
-                .font(.obsSectionTitle)
+            OBSSectionHeaderV2(
+                "Keine Tracks gefunden",
+                subtitle: "Entweder sind keine Fahrten im Portal gespeichert oder du bist nicht eingeloggt."
+            )
 
-            Text("Es wurden noch keine Fahrten im Portal gespeichert oder es gibt momentan keine eigenen Tracks.")
+            Text("Wenn du sicher bist, dass Tracks existieren: Tippe oben auf „Login“ und lade danach neu.")
                 .font(.obsFootnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
+        .obsCardStyleV2()
     }
 
-    /// Inline-Hinweis, dass ggf. ein Login nötig ist
     private var loginHintInline: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -205,13 +221,14 @@ struct PortalTracksListView: View {
                 Text("Login-Hinweis")
                     .font(.obsSectionTitle)
             }
+
             Text("Falls keine oder nur wenige Fahrten angezeigt werden, prüfe, ob du oben rechts über „Login“ im OBS-Portal angemeldet bist.")
                 .font(.obsFootnote)
                 .foregroundStyle(.secondary)
         }
+        .obsCardStyleV2()
     }
 
-    /// Kleine Ladezeile für „Reload während schon Daten da sind“
     private var loadingInlineRow: some View {
         HStack(spacing: 8) {
             ProgressView()
@@ -220,58 +237,21 @@ struct PortalTracksListView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .obsCardStyleV2()
     }
 
-    /// Einzelne Track-Karte, tappbar → navigiert zur Detail-View
-    private func trackCard(for track: PortalTrackSummary) -> some View {
-        // Titel: optional/leer → Fallback
-        let title = track.title.obsDisplayText(or: "(ohne Titel)")
-
-        return NavigationLink {
-            // Detailansicht: baseUrl wird weitergereicht, damit dort API-Calls möglich sind
-            PortalTrackDetailView(baseUrl: obsBaseUrl, track: track)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.obsSectionTitle)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                // Track-ID im Portal
-                Text("Portal-ID: \(track.slug)")
-                    .font(.obsCaption)
-                    .foregroundStyle(.secondary)
-
-                // Kennzahlen (monospacedDigit für stabilere Zahlendarstellung)
-                HStack(spacing: 12) {
-                    Text(String(format: "Länge: %.2f km", track.length / 1000.0))
-                    Text("Dauer: \(DurationText.format(track.duration))")
-                    Text("Events: \(track.numEvents)")
-                }
-                .font(.obsCaption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.plain) // entfernt Standard-Link-Optik
-    }
-
-    // MARK: - Datum Parsing (Portal-Format)
-
-    /// Hilfs-Typ zum Parsen der Portal-Datumsstrings.
-    /// Hintergrund: Das Portal liefert teils Strings mit und teils ohne Bruchteile von Sekunden.
+    // MARK: - Datum Parsing
+    //
+    // Portal liefert recordedAt im ISO-Format, teils mit Fractional Seconds.
+    // DateFormatter ist teuer -> deshalb statisch gecached.
     private enum PortalDate {
-
-        /// Format mit Fractional Seconds (z.B. ...:12.123456+0000)
         private static let dfWithFraction: DateFormatter = {
             let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX") // robustes Parsing unabhängig von Locale
+            df.locale = Locale(identifier: "en_US_POSIX")
             df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
             return df
         }()
 
-        /// Format ohne Fractional Seconds (z.B. ...:12+0000)
         private static let dfNoFraction: DateFormatter = {
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
@@ -279,8 +259,6 @@ struct PortalTracksListView: View {
             return df
         }()
 
-        /// Versucht beide Formate; wenn nichts passt, fällt es auf distantPast zurück
-        /// (damit Sortierung nicht crasht, aber die „unparsbaren“ weit hinten landen)
         static func parse(_ s: String) -> Date {
             if let d = dfWithFraction.date(from: s) { return d }
             if let d = dfNoFraction.date(from: s) { return d }
@@ -288,46 +266,49 @@ struct PortalTracksListView: View {
         }
     }
 
-    // MARK: - Laden
-
-    /// Lädt die eigenen Tracks aus dem Portal.
-    /// - Bei 401: zeigt Hinweis, dass Login nötig ist.
-    /// - Bei ungültiger URL: zeigt Config-Hinweis.
+    // MARK: - Load
+    //
+    // Lädt Tracks aus dem Portal.
+    // Wichtig:
+    // - isLoading schützt vor parallelen Requests
+    // - tracks werden sortiert (neueste zuerst)
+    // - tracks update erfolgt ohne Animation (reduziert Jank)
     private func load() async {
-        // Ohne Portal-URL macht der API Call keinen Sinn
         guard !obsBaseUrl.isEmpty else {
             errorMessage = "Portal-URL ist leer. Bitte in den Portal-Einstellungen eintragen."
             tracks = []
             return
         }
 
-        // Doppelte Requests verhindern
         guard !isLoading else { return }
 
         isLoading = true
-        defer { isLoading = false } // sorgt dafür, dass isLoading am Ende sicher zurückgesetzt wird
+        defer { isLoading = false }
 
         do {
-            // API Client erstellen und Tracks abrufen
             let client = PortalApiClient(baseUrl: obsBaseUrl)
             let result = try await client.fetchMyTracks(limit: 20)
 
-            // Sortieren: neueste Aufnahme zuerst (recordedAt absteigend)
-            tracks = result.tracks.sorted {
+            // Sortierung nach recordedAt, neueste zuerst
+            let sorted = result.tracks.sorted {
                 PortalDate.parse($0.recordedAt) > PortalDate.parse($1.recordedAt)
             }
 
+            // ✅ Update ohne Animation:
+            // verhindert unnötige „Diff“-Animationen beim Re-Rendern der List Rows
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                tracks = sorted
+            }
+
             errorMessage = nil
-            print("PortalTracksListView: \(result.tracks.count) Tracks geladen")
 
         } catch let PortalApiError.httpError(status, body) where status == 401 {
-            // 401 = nicht eingeloggt / keine Berechtigung
-            print("PortalTracksListView: 401 Unauthorized – Body: \(body)")
-            errorMessage = "Nicht im Portal eingeloggt.\nBitte oben auf „Login“ tippen und dich anmelden."
+            errorMessage = "Nicht im Portal eingeloggt.\nBitte oben auf „Login“ tippen und dich anmelden.\n\nAntwort:\n\(body)"
             tracks = []
 
         } catch PortalApiError.invalidBaseUrl {
-            // baseUrl im AppStorage ist syntaktisch ungültig
             errorMessage = """
             Portal-URL ist ungültig:
 
@@ -338,25 +319,66 @@ struct PortalTracksListView: View {
             tracks = []
 
         } catch PortalApiError.invalidURL {
-            // Interner Fehler beim Bauen eines Endpunkt-URLs
             errorMessage = "Interne URL konnte nicht gebaut werden.\nBitte Portal-URL prüfen."
             tracks = []
 
         } catch PortalApiError.noHTTPResponse {
-            // Netzwerkproblem / Server nicht erreichbar / keine Antwort
             errorMessage = "Keine gültige HTTP-Antwort vom Portal erhalten.\nIst das Portal erreichbar?"
             tracks = []
 
         } catch let PortalApiError.httpError(status, body) {
-            // Allgemeiner HTTP-Fehler
             errorMessage = "Serverfehler \(status).\nAntwort:\n\(body)"
             tracks = []
 
         } catch {
-            // Unbekannter Fehler (Decoding, Netzwerk, etc.)
             errorMessage = "Unbekannter Fehler: \(error.localizedDescription)"
             tracks = []
         }
+    }
+}
+
+// MARK: - Row Content
+//
+// Absichtlich ohne obsCardStyleV2 hier drin,
+// damit die Row selbst günstig bleibt. Der Card-Look wird außen angewendet.
+private struct PortalTrackRowContent: View {
+    let track: PortalTrackSummary
+
+    var body: some View {
+        // Titel robust bestimmen (ohne obsDisplayText Extension)
+        let title = (track.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? track.title!
+            : "(ohne Titel)"
+
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.obsSectionTitle)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Text("Portal-ID: \(track.slug)")
+                .font(.obsCaption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Text(String(format: "Länge: %.2f km", track.length / 1000.0))
+                Text("Dauer: \(formattedDuration(track.duration))")
+                Text("Events: \(track.numEvents)")
+            }
+            .font(.obsCaption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+
+    /// Formatiert Sekunden als „X h Y min“ bzw. „Y min“.
+    private func formattedDuration(_ seconds: Double) -> String {
+        let s = Int(seconds)
+        let hours = s / 3600
+        let minutes = (s % 3600) / 60
+        return hours > 0 ? "\(hours) h \(minutes) min" : "\(minutes) min"
     }
 }
 

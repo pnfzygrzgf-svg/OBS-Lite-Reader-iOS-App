@@ -1,3 +1,5 @@
+// PortalTrackDetailView.swift
+
 import SwiftUI
 import CoreLocation
 
@@ -6,6 +8,12 @@ import CoreLocation
 /// - Kopfkarte (Titel, Autor, Kennzahlen)
 /// - Karte mit Route + Event-Markern (OvertakeEvents)
 /// - Einklappbare Detail-Liste (DisclosureGroup)
+///
+/// OPTIK-UPDATE:
+/// - GroupedScrollScreenV2 Wrapper statt eigenem ZStack/ScrollView
+/// - Header: klare Hierarchie (Titel groß, Meta klein)
+/// - Map: sauberer Card-Look + klarer Fullscreen Button
+/// - Details: ruhigere Rows (Label links sekundär, Value rechts)
 struct PortalTrackDetailView: View {
 
     // Basis-URL des Portals (wird für API-Calls genutzt)
@@ -51,23 +59,12 @@ struct PortalTrackDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Hintergrund ähnlich iOS "Grouped" Screens
-            Color(.systemGroupedBackground)
-                .ignoresSafeArea()
-
-            // Scrollbarer Inhalt: drei Karten untereinander
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    headerCard   // Titel/Autor/Kennzahlen
-                    mapCard      // Karte + Ladezustand + Fullscreen
-                    detailsCard  // DisclosureGroup mit Details
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 32)
+        GroupedScrollScreenV2 {
+            VStack(alignment: .leading, spacing: 16) {
+                headerCard   // Titel/Autor/Kennzahlen
+                mapCard      // Karte + Ladezustand + Fullscreen
+                detailsCard  // DisclosureGroup mit Details
             }
-            .scrollIndicators(.hidden)
         }
         .navigationTitle("Track-Details")
         .navigationBarTitleDisplayMode(.inline)
@@ -125,12 +122,12 @@ struct PortalTrackDetailView: View {
 
     /// Kopfkarte mit Titel, Autor und ein paar Kennzahlen (Länge, Dauer, Events)
     private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
 
             // Titel: optional → Fallback auf "(ohne Titel)"
             Text(track.title?.isEmpty == false ? track.title! : "(ohne Titel)")
                 .font(.obsScreenTitle)
-                .lineLimit(2)
+                .lineLimit(3)
                 .multilineTextAlignment(.leading)
 
             // Autor-Zeile mit Icon
@@ -145,14 +142,15 @@ struct PortalTrackDetailView: View {
             }
 
             // Aufzeichnungszeitraum nur anzeigen, wenn mindestens ein Wert gesetzt ist
-            // (recordedAt/recordedUntil sind Strings – nicht optional)
             if !track.recordedAt.isEmpty || !track.recordedUntil.isEmpty {
                 Text("Aufzeichnung: \(track.recordedAt) – \(track.recordedUntil)")
-                    .font(.obsFootnote)
+                    .font(.obsCaption)
                     .foregroundStyle(.secondary)
             }
 
-            // Kennzahlen-Zeile (monospacedDigit für „ruhigere“ Zahlenanzeige)
+            Divider()
+
+            // Kennzahlen (monospacedDigit für „ruhigere“ Zahlenanzeige)
             HStack(spacing: 12) {
                 Text(String(format: "Länge: %.2f km", track.length / 1000.0))
                 Text("Dauer: \(formattedDuration(track.duration))")
@@ -161,16 +159,14 @@ struct PortalTrackDetailView: View {
             .font(.obsCaption)
             .monospacedDigit()
             .foregroundStyle(.secondary)
-            .padding(.top, 4)
         }
-        .obsCardStyle()
+        .obsCardStyleV2()
     }
 
     /// Karte mit PortalTrackMapView bzw. Lade-/Fallback-UI
     private var mapCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Karte")
-                .font(.obsSectionTitle)
+        VStack(alignment: .leading, spacing: 10) {
+            OBSSectionHeaderV2("Karte", subtitle: "Tippe auf die Karte für Vollbild.")
 
             // Wenn bereits Route vorhanden ist → Karte anzeigen
             if !mapRoute.isEmpty {
@@ -179,10 +175,9 @@ struct PortalTrackDetailView: View {
                     // Karte in normaler Größe
                     PortalTrackMapView(route: mapRoute, events: mapEvents)
                         .frame(height: 300)
-                        .cornerRadius(12)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .clipped()
-
-                        // Optional: Tap auf Karte öffnet Fullscreen
+                        // Tap öffnet Fullscreen
                         .onTapGesture {
                             showFullscreenMap = true
                         }
@@ -192,14 +187,14 @@ struct PortalTrackDetailView: View {
                         showFullscreenMap = true
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .padding(8)
+                            .font(.body.weight(.semibold))
+                            .padding(10)
                             .background(.thinMaterial)
                             .clipShape(Circle())
                     }
-                    .padding(8)
+                    .padding(10)
                 }
 
-            // Wenn Map-Daten gerade geladen werden → Progress + Text
             } else if isLoadingMap {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -208,7 +203,6 @@ struct PortalTrackDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-            // Sonst: Button zum manuellen Nachladen der Karte
             } else {
                 Button {
                     Task { await loadTrackData() }
@@ -221,26 +215,21 @@ struct PortalTrackDetailView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .obsCardStyle()
+        .obsCardStyleV2()
     }
 
     /// Karte mit einklappbaren Details (DisclosureGroup)
     /// - standardmäßig zu (showDetails = false)
     private var detailsCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             DisclosureGroup(
                 isExpanded: $showDetails,
                 content: {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
 
-                        // Group = rein optisch/strukturell, keine Layout-Auswirkung
                         Group {
-                            // Viele Felder sind optional oder können leer sein → Fallback in detailRow
-                            detailRow(
-                                label: "Titel",
-                                value: track.title?.isEmpty == false ? track.title! : "(ohne Titel)"
-                            )
-                            detailRow(label: "Portal-ID", value: track.slug) // statt „Slug“
+                            detailRow(label: "Titel", value: track.title?.isEmpty == false ? track.title! : "(ohne Titel)")
+                            detailRow(label: "Portal-ID", value: track.slug)
 
                             detailRow(label: "Autor", value: track.author.displayName)
                             detailRow(label: "Öffentlich", value: track.isPublic ? "Ja" : "Nein")
@@ -259,17 +248,16 @@ struct PortalTrackDetailView: View {
 
                         // Beschreibung nur anzeigen, wenn vorhanden und nicht leer
                         if let desc = track.description, !desc.isEmpty {
-                            Divider().padding(.vertical, 4)
+                            Divider().padding(.vertical, 2)
                             Text("Beschreibung")
-                                .font(.headline)
+                                .font(.obsBody.weight(.semibold))
                             Text(desc)
                                 .font(.obsBody)
                         }
 
                         // Wenn Details gerade nachgeladen werden:
-                        // - zeigt Ladeindikator innerhalb der Detail-Section
                         if isLoading {
-                            Divider().padding(.vertical, 4)
+                            Divider().padding(.vertical, 2)
                             HStack(spacing: 8) {
                                 ProgressView()
                                 Text("Lade Details…")
@@ -278,10 +266,9 @@ struct PortalTrackDetailView: View {
                             }
                         }
                     }
-                    .padding(.top, 4)
+                    .padding(.top, 6)
                 },
                 label: {
-                    // Label-Zeile (immer sichtbar)
                     HStack {
                         Text("Details")
                             .font(.obsSectionTitle)
@@ -293,7 +280,7 @@ struct PortalTrackDetailView: View {
                 }
             )
         }
-        .obsCardStyle()
+        .obsCardStyleV2()
     }
 
     // MARK: - Hilfs-UI
@@ -303,13 +290,16 @@ struct PortalTrackDetailView: View {
     private func detailRow(label: String, value: String?) -> some View {
         let text = (value?.isEmpty == false ? value! : "–")
 
-        return HStack {
+        return HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .font(.obsFootnote)
                 .foregroundStyle(.secondary)
+
             Spacer()
+
             Text(text)
                 .font(.obsFootnote)
+                .multilineTextAlignment(.trailing)
         }
     }
 
@@ -458,8 +448,8 @@ struct PortalTrackDetailView: View {
         author: author
     )
 
-    // NavigationView im Preview, damit navigationTitle/Bar korrekt angezeigt werden
-    return NavigationView {
+    // NavigationStack im Preview, damit navigationTitle/Bar korrekt angezeigt werden
+    return NavigationStack {
         PortalTrackDetailView(baseUrl: "https://portal.openbikesensor.org", track: track)
     }
 }

@@ -1,3 +1,5 @@
+// BluetoothManager.swift
+
 import Foundation
 import CoreBluetooth
 import SwiftProtobuf

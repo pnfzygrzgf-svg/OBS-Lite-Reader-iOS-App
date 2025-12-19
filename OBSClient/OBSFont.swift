@@ -1,4 +1,4 @@
-// FontOBS.swift
+// OBSFont.swift
 
 import SwiftUI
 
@@ -55,13 +55,17 @@ extension Font {
 // Statt im Code überall „magische Zahlen“ oder Styles zu verteilen,
 // gibt es sprechende Rollen wie `.obsScreenTitle`, `.obsBody`, `.obsValue`.
 // So bleibt das Design konsistent und Änderungen sind zentral möglich.
+//
+// OPTIK-UPDATE:
+// - ScreenTitle etwas kleiner/ruhiger (passt besser zu iOS grouped screens)
+// =====================================================
 
 extension Font {
 
     /// Sehr prominenter Titel (z.B. Screen-Überschrift innerhalb einer Card).
-    /// Groß + bold, damit er sofort auffällt.
+    /// OPTIK: etwas kleiner und weniger „schreiend“
     static var obsScreenTitle: Font {
-        .obs(size: 24, weight: .bold)
+        .obs(size: 20, weight: .semibold)
     }
 
     /// Abschnittsüberschrift (z.B. „Sensorwerte“, „Lenkerbreite“).

@@ -1,8 +1,15 @@
+// SplashView.swift
+
 import SwiftUI
 
 /// Splash mit „Text-Mask Reveal“
 /// - Titel wird per animierter Maske (von links nach rechts) „aufgedeckt“
 /// - Subtitle erscheint leicht verzögert (Fade + Rise)
+///
+/// OPTIK-UPDATE:
+/// - Subtile Typo (rounded) + bessere Abstände
+/// - sanfteres Timing
+/// - respektiert Reduce Motion
 struct SplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -19,11 +26,11 @@ struct SplashView: View {
             Color("LaunchBackground")
                 .ignoresSafeArea()
 
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
 
                 // MARK: - Title mit Mask Reveal
                 Text("#Bürger*innenforschung")
-                    .font(.system(size: 30, weight: .bold))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
                     .tracking(0.6)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -43,7 +50,7 @@ struct SplashView: View {
 
                 // MARK: - Subtitle (staggered)
                 Text("für Verkehrssicherheit")
-                    .font(.headline)
+                    .font(.system(.headline, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.85))
                     .opacity(showSubtitle ? 1 : 0)
                     .offset(y: showSubtitle ? 0 : 8)
@@ -67,12 +74,12 @@ struct SplashView: View {
         }
 
         // 1) Title Reveal
-        withAnimation(.easeOut(duration: 0.65)) {
+        withAnimation(.easeOut(duration: 0.70)) {
             reveal = 1.0
         }
 
         // kleiner Stagger
-        do { try await Task.sleep(nanoseconds: 180_000_000) } catch { return }
+        do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
 
         // 2) Subtitle nachziehen (Fade + Rise)
         withAnimation(.easeOut(duration: 0.45)) {
