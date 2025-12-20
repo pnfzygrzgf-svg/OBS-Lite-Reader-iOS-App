@@ -2,10 +2,11 @@
 
 import SwiftUI
 import UIKit
+import Combine
 
 /// Haupt-UI der App.
 /// Zeigt:
-/// - Logo / Gerätetyp-Auswahl
+/// - Logo
 /// - Verbindungsstatus + Permission-Hinweise
 /// - Live-Sensorwerte + Lenkerbreite
 /// - Record-Button (Start/Stop Aufnahme)
@@ -26,6 +27,26 @@ struct ContentView: View {
     /// Steuert, ob die Info-Ansicht als Sheet angezeigt wird.
     @State private var showingInfo = false
 
+    // MARK: - Connection Watchdog (UI-seitig)
+    /// Zeitpunkt der letzten eingehenden Sensordaten (aus Sicht der UI).
+    @State private var lastSensorUpdate: Date = .distantPast
+
+    /// UI-Flag: Verbindung wirkt "stale" (keine Daten mehr), auch wenn bt.isConnected ggf. noch true ist.
+    @State private var connectionIsStale = false
+
+    /// Wie lange ohne Daten, bis wir die Verbindung als verloren darstellen.
+    private let staleAfterSeconds: TimeInterval = 3.5
+
+    private var isConnectedForUI: Bool {
+        bt.isConnected && !connectionIsStale
+    }
+
+    private let watchdogTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+
+    // MARK: - Disconnect Notice Alert
+    @State private var showDisconnectAlert = false
+    @State private var disconnectAlertText = ""
+
     var body: some View {
         ZStack {
             Color(.systemGroupedBackground)
@@ -36,14 +57,18 @@ struct ContentView: View {
                     LogoView {
                         showingInfo = true
                     }
-                    DeviceTypeSelectionCard()
-                    ConnectionStatusCard()
+
+                    ConnectionStatusCard(isConnectionStale: connectionIsStale)
 
                     if !bt.isPoweredOn || !bt.hasBluetoothPermission {
                         BluetoothPermissionHintView()
                     }
 
-                    MeasurementsCardView(showSideDistances: $showSideDistances)
+                    MeasurementsCardView(
+                        showSideDistances: $showSideDistances,
+                        isConnectedForUI: isConnectedForUI
+                    )
+
                     HandlebarWidthView(handlebarWidthCm: $bt.handlebarWidthCm)
 
                     if !bt.isLocationEnabled || !bt.hasLocationAlwaysPermission {
@@ -67,11 +92,9 @@ struct ContentView: View {
             }
         }
 
-        // ✅ Navigation-Titel gehört hierhin (NavigationStack ist im App-Root pro Tab)
         .navigationTitle("OBS Recorder")
         .navigationBarTitleDisplayMode(.inline)
 
-        // ✅ InfoView als Sheet ist zuverlässig klickbar (auch in Cards/ScrollViews)
         .sheet(isPresented: $showingInfo) {
             NavigationStack {
                 InfoView()
@@ -82,11 +105,47 @@ struct ContentView: View {
 
         .safeAreaInset(edge: .bottom) {
             RecordButtonView(
-                isConnected: bt.isConnected,
+                isConnected: isConnectedForUI,
                 isRecording: bt.isRecording,
                 onTap: handleRecordTap
             )
         }
+
+        // MARK: - Watchdog wiring
+        .onReceive(watchdogTimer) { _ in
+            updateConnectionStaleness()
+        }
+        .onChange(of: bt.isConnected) { _, newValue in
+            if newValue {
+                lastSensorUpdate = Date()
+                connectionIsStale = false
+            } else {
+                connectionIsStale = false
+            }
+        }
+
+        // Wenn irgendein Sensorwert reinkommt/ändert: "lebt".
+        .onChange(of: bt.overtakeDistanceCm) { _, _ in markSensorAlive() }
+        .onChange(of: bt.leftRawCm) { _, _ in markSensorAlive() }
+        .onChange(of: bt.rightRawCm) { _, _ in markSensorAlive() }
+        .onChange(of: bt.leftCorrectedCm) { _, _ in markSensorAlive() }
+        .onChange(of: bt.rightCorrectedCm) { _, _ in markSensorAlive() }
+        .onChange(of: bt.currentDistanceMeters) { _, _ in markSensorAlive() }
+
+        // Meldung aus BluetoothManager anzeigen (einmalig)
+        .onChange(of: bt.userNotice) { _, newValue in
+            guard let msg = newValue, !msg.isEmpty else { return }
+            disconnectAlertText = msg
+            showDisconnectAlert = true
+        }
+        .alert("Hinweis", isPresented: $showDisconnectAlert) {
+            Button("OK", role: .cancel) {
+                bt.userNotice = nil
+            }
+        } message: {
+            Text(disconnectAlertText)
+        }
+
         .onDisappear {
             toastTask?.cancel()
             toastTask = nil
@@ -97,7 +156,7 @@ struct ContentView: View {
 
     @MainActor
     private func handleRecordTap() {
-        guard bt.isConnected else {
+        guard isConnectedForUI else {
             Haptics.shared.warning()
             return
         }
@@ -125,13 +184,46 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: - Watchdog helpers
+
+    private func markSensorAlive() {
+        lastSensorUpdate = Date()
+        if connectionIsStale {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                connectionIsStale = false
+            }
+        }
+    }
+
+    private func updateConnectionStaleness() {
+        guard bt.isConnected else {
+            if connectionIsStale { connectionIsStale = false }
+            return
+        }
+
+        let dt = Date().timeIntervalSince(lastSensorUpdate)
+        let shouldBeStale = dt > staleAfterSeconds
+
+        if shouldBeStale != connectionIsStale {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                connectionIsStale = shouldBeStale
+            }
+        }
+    }
+}
+
+// MARK: - Helpers
+
+private func dashIfEmpty(_ s: String?) -> String {
+    let trimmed = (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? "-" : trimmed
 }
 
 // MARK: - Logo
 
 struct LogoView: View {
 
-    /// Callback, damit ContentView entscheidet, wie Info angezeigt wird (Sheet).
     let onInfoTap: () -> Void
 
     var body: some View {
@@ -144,54 +236,23 @@ struct LogoView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("OBS Recorder")
                     .font(.obsSectionTitle)
-
-               
             }
 
             Spacer()
 
-            // Info-Button sitzt jetzt im Header (passt optisch besser)
-            //  Als „Chip“ wirkt es ruhiger als Icon im Kreis.
-            //  Button + Sheet ist robuster als NavigationLink in Card/ScrollView.
             Button(action: onInfoTap) {
                 Label("Info", systemImage: "info.circle")
                     .font(.obsFootnote.weight(.semibold))
-                    .foregroundStyle(Color.obsAccentV2) // oder .tint greift auch
+                    .foregroundStyle(Color.obsAccentV2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(
                         Capsule().fill(Color(.secondarySystemFill))
                     )
-                    .contentShape(Capsule()) //  Tap-Fläche exakt wie Capsule
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Info")
-        }
-        .obsCardStyleV2()
-    }
-}
-
-// MARK: - Device Type Selection
-
-struct DeviceTypeSelectionCard: View {
-    @EnvironmentObject var bt: BluetoothManager
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Gerätetyp")
-                .font(.obsSectionTitle)
-
-            Picker("Gerätetyp", selection: $bt.deviceType) {
-                ForEach(ObsDeviceType.allCases) { type in
-                    Text(type.displayName).tag(type)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Text(bt.deviceType.description)
-                .font(.obsFootnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .obsCardStyleV2()
     }
@@ -201,19 +262,35 @@ struct DeviceTypeSelectionCard: View {
 
 struct ConnectionStatusPresentation {
     let title: String
-    let subtitle: String
+    let summary: String
+    let details: String?
     let color: Color
+    let canShowDetails: Bool
 
-    init(bt: BluetoothManager) {
+    init(bt: BluetoothManager, isConnectionStale: Bool) {
+
+        if bt.isConnected && isConnectionStale {
+            title = "Verbindung verloren"
+            summary = "Keine Sensordaten mehr empfangen."
+            details = nil
+            color = .obsWarnV2
+            canShowDetails = false
+            return
+        }
+
         if bt.isConnected {
             title = "Mit OBS verbunden"
             color = .obsGoodV2
+            canShowDetails = true
 
+            let name = dashIfEmpty(bt.connectedName)
             let detected = bt.detectedDeviceType?.displayName ?? "unbekannt"
-            let mfg = bt.manufacturerName.obsNonEmptyOrDashV2
-            let fw  = bt.firmwareRevision.obsNonEmptyOrDashV2
+            summary = "\(name) · \(detected)"
 
-            subtitle = """
+            let mfg = dashIfEmpty(bt.manufacturerName)
+            let fw  = dashIfEmpty(bt.firmwareRevision)
+
+            details = """
             Name: \(bt.connectedName)
             LocalName: \(bt.connectedLocalName)
             Detected: \(detected) · Quelle: \(bt.lastBleSource)
@@ -225,29 +302,38 @@ struct ConnectionStatusPresentation {
 
         if !bt.isPoweredOn {
             title = "Bluetooth deaktiviert"
-            subtitle = "Aktiviere Bluetooth, um den Sensor zu verbinden."
+            summary = "Aktiviere Bluetooth, um den Sensor zu verbinden."
+            details = nil
             color = .obsDangerV2
+            canShowDetails = false
             return
         }
 
         if !bt.hasBluetoothPermission {
             title = "Bluetooth-Zugriff erforderlich"
-            subtitle = "Erlaube Bluetooth-Zugriff in den iOS-Einstellungen."
+            summary = "Erlaube Bluetooth-Zugriff in den iOS-Einstellungen."
+            details = nil
             color = .obsDangerV2
+            canShowDetails = false
             return
         }
 
         title = "Nicht verbunden"
-        subtitle = "Warten auf Sensorverbindung."
+        summary = "Warten auf Sensorverbindung."
+        details = nil
         color = .obsWarnV2
+        canShowDetails = false
     }
 }
 
 struct ConnectionStatusCard: View {
     @EnvironmentObject var bt: BluetoothManager
+    let isConnectionStale: Bool
+
+    @State private var showDetails = false
 
     var body: some View {
-        let p = ConnectionStatusPresentation(bt: bt)
+        let p = ConnectionStatusPresentation(bt: bt, isConnectionStale: isConnectionStale)
 
         HStack(spacing: 12) {
             Image(systemName: "dot.radiowaves.left.and.right")
@@ -255,14 +341,41 @@ struct ConnectionStatusCard: View {
                 .foregroundStyle(p.color)
                 .font(.title3)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(p.title)
                     .font(.obsSectionTitle)
 
-                Text(p.subtitle)
+                Text(p.summary)
                     .font(.obsFootnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if p.canShowDetails, let details = p.details {
+                    if showDetails {
+                        Text(details)
+                            .font(.obsFootnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                            showDetails.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(showDetails ? "Details ausblenden" : "Details anzeigen")
+                                .font(.obsFootnote.weight(.semibold))
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .rotationEffect(.degrees(showDetails ? 180 : 0))
+                        }
+                        .foregroundStyle(Color.obsAccentV2)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
             }
 
             Spacer()
@@ -383,9 +496,11 @@ struct MeasurementsCardView: View {
     @EnvironmentObject var bt: BluetoothManager
     @Binding var showSideDistances: Bool
 
+    let isConnectedForUI: Bool
+
     private var isWaitingForSideValues: Bool {
         showSideDistances
-        && bt.isConnected
+        && isConnectedForUI
         && bt.leftRawCm == nil
         && bt.rightRawCm == nil
         && bt.leftCorrectedCm == nil
@@ -405,7 +520,7 @@ struct MeasurementsCardView: View {
                     .accessibilityLabel("Abstände links und rechts anzeigen")
             }
 
-            if showSideDistances && (!bt.isConnected || isWaitingForSideValues) {
+            if showSideDistances && (!isConnectedForUI || isWaitingForSideValues) {
                 SensorValuesSkeletonView()
                     .transition(.opacity)
             }
@@ -414,23 +529,23 @@ struct MeasurementsCardView: View {
                 HStack(alignment: .top, spacing: 32) {
                     SensorValueView(
                         title: "Abstand links",
-                        corrected: bt.leftCorrectedCm,
-                        raw: bt.leftRawCm
+                        corrected: isConnectedForUI ? bt.leftCorrectedCm : nil,
+                        raw: isConnectedForUI ? bt.leftRawCm : nil
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .redacted(reason: isWaitingForSideValues ? .placeholder : [])
 
                     SensorValueView(
                         title: "Abstand rechts",
-                        corrected: bt.rightCorrectedCm,
-                        raw: bt.rightRawCm
+                        corrected: isConnectedForUI ? bt.rightCorrectedCm : nil,
+                        raw: isConnectedForUI ? bt.rightRawCm : nil
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .redacted(reason: isWaitingForSideValues ? .placeholder : [])
                 }
             }
 
-            OvertakeDistanceView(distance: bt.overtakeDistanceCm)
+            OvertakeDistanceView(distance: isConnectedForUI ? bt.overtakeDistanceCm : nil)
         }
         .obsCardStyleV2()
     }
@@ -694,4 +809,3 @@ struct SaveConfirmationToast: View {
         }
     }
 }
-

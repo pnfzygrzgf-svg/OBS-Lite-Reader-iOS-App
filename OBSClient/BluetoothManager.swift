@@ -30,7 +30,7 @@ private let firmwareRevisionCharUUID     = CBUUID(string: "00002A26-0000-1000-80
 private let manufacturerNameCharUUID     = CBUUID(string: "00002A29-0000-1000-8000-00805F9B34FB")
 
 // =====================================================
-// MARK: - Gerätetyp
+// MARK: - Gerätetyp (nur Anzeige/Auto-Detect)
 // =====================================================
 
 enum ObsDeviceType: String, CaseIterable, Identifiable {
@@ -79,16 +79,12 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private var liveSessionId: String?
 
+    /// Aufnahmetyp für die aktuelle Session (damit stopRecording weiß, was zu finalisieren ist).
+    private var recordingDeviceType: ObsDeviceType?
+
     // -------------------------------------------------
     // MARK: Published State (SwiftUI)
     // -------------------------------------------------
-
-    @Published var deviceType: ObsDeviceType = .lite {
-        didSet {
-            UserDefaults.standard.set(deviceType.rawValue, forKey: "obsDeviceType")
-            restartScanForCurrentDeviceType()
-        }
-    }
 
     @Published var isPoweredOn: Bool = false
     @Published var isConnected: Bool = false
@@ -102,6 +98,9 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     @Published var lastEvent: Openbikesensor_Event?
     @Published var lastError: String?
+
+    // Einmalige Meldung für die UI
+    @Published var userNotice: String?
 
     @Published var lastDistanceText: String = "Noch keine Messung. Starte eine Aufnahme, um Werte zu sehen."
     @Published var lastMessageText: String = ""
@@ -142,6 +141,13 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var detectedDeviceType: ObsDeviceType?
     @Published var lastBleSource: String = "-"
 
+    // =====================================================
+    // MARK: - Live-Karten-Events
+    // =====================================================
+
+    @Published var liveOvertakeEvents: [OvertakeEvent] = []
+    @Published var lastOvertakeAt: Date?
+
     // -------------------------------------------------
     // MARK: Private BLE State
     // -------------------------------------------------
@@ -164,16 +170,14 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var movingMedian = MovingMedian(windowSize: 3, maxSamples: 122)
 
     // -------------------------------------------------
-    // MARK: Scan Robustness
+    // MARK: Connection Watchdog
     // -------------------------------------------------
 
-    private enum ScanMode {
-        case strictService
-        case broadFallback
-    }
+    private var lastConnectAt: Date?
+    private let connectionStaleAfter: TimeInterval = 6.5
 
-    private var scanMode: ScanMode = .strictService
-    private var scanFallbackTimer: Timer?
+    private var watchdogCancellable: AnyCancellable?
+    private var isForcingDisconnect = false
 
     // -------------------------------------------------
     // MARK: Init
@@ -185,11 +189,6 @@ final class BluetoothManager: NSObject, ObservableObject {
         let stored = UserDefaults.standard.integer(forKey: "handlebarWidthCm")
         if stored != 0 { handlebarWidthCm = stored }
 
-        if let storedType = UserDefaults.standard.string(forKey: "obsDeviceType"),
-           let t = ObsDeviceType(rawValue: storedType) {
-            deviceType = t
-        }
-
         central = CBCentralManager(
             delegate: self,
             queue: nil,
@@ -198,6 +197,12 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         locationManager.delegate = self
         updateLocationAuthorizationStatus()
+
+        watchdogCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.watchdogTick()
+            }
     }
 
     // -------------------------------------------------
@@ -211,18 +216,100 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     // -------------------------------------------------
+    // MARK: Reset bei Disconnect
+    // -------------------------------------------------
+
+    private func resetAfterDisconnectOrStop() {
+        ui {
+            self.leftRawCm = nil
+            self.leftCorrectedCm = nil
+            self.rightRawCm = nil
+            self.rightCorrectedCm = nil
+            self.overtakeDistanceCm = nil
+            self.lastMedianAtPressCm = nil
+
+            self.leftDistanceText = "Links: Noch keine Messung."
+            self.rightDistanceText = "Rechts: Noch keine Messung."
+            self.overtakeDistanceText = "Überholabstand: Noch keine Messung."
+            self.lastDistanceText = "Noch keine Messung. Starte eine Aufnahme, um Werte zu sehen."
+            self.lastMessageText = ""
+
+            self.lastEvent = nil
+
+            // beides auf Null
+            self.currentOvertakeCount = 0
+            self.currentDistanceMeters = 0
+            self.lastLocation = nil
+
+            self.liveOvertakeEvents.removeAll()
+            self.lastOvertakeAt = nil
+
+            self.lastSensorPacketAt = nil
+
+            self.connectedRSSI = nil
+            self.lastBleSource = "-"
+        }
+
+        movingMedian.reset()
+    }
+
+    // -------------------------------------------------
+    // MARK: Disconnect -> Aufnahme beenden + Meldung
+    // -------------------------------------------------
+
+    private let disconnectStopMessage = "Verbindung zum Sensor verloren: Aufnahme wurde beendet und Datei gespeichert"
+
+    private func stopRecordingDueToDisconnect() {
+        guard isRecording else { return }
+
+        stopRecording()
+
+        ui { self.userNotice = self.disconnectStopMessage }
+
+        //  Nach Disconnect: alles leeren
+        resetAfterDisconnectOrStop()
+    }
+
+    // =====================================================
+    // MARK: Public API (Karte)
+    // =====================================================
+
+    func clearLiveOvertakeEvents() {
+        ui {
+            self.liveOvertakeEvents.removeAll()
+            self.lastOvertakeAt = nil
+        }
+    }
+
+    // -------------------------------------------------
     // MARK: Recording API
     // -------------------------------------------------
 
     func startRecording() {
+        guard isConnected else {
+            ui { self.userNotice = "Kein Sensor verbunden." }
+            return
+        }
+
+        guard let t = detectedDeviceType else {
+            ui { self.userNotice = "Kein kompatibles OBS-Gerät erkannt." }
+            return
+        }
+
         ui {
             self.currentOvertakeCount = 0
             self.currentDistanceMeters = 0
             self.lastLocation = nil
+
+            self.liveOvertakeEvents.removeAll()
+            self.lastOvertakeAt = nil
+
             self.isRecording = true
         }
 
-        switch deviceType {
+        recordingDeviceType = t
+
+        switch t {
         case .lite:
             binWriter.startSession()
 
@@ -238,7 +325,6 @@ final class BluetoothManager: NSObject, ObservableObject {
             recorder.startSession()
         }
 
-        // ---------- Live Activity START ----------
         if #available(iOS 16.1, *) {
             let sessionId = UUID().uuidString
             liveSessionId = sessionId
@@ -255,14 +341,27 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     func stopRecording() {
-        switch deviceType {
-        case .lite:
+        let t = recordingDeviceType
+
+        switch t {
+        case .some(.lite):
             binWriter.finishSession()
-        case .classic:
+        case .some(.classic):
             classicCsvRecorder?.finishSession()
+        case .none:
+            break
         }
 
-        let fileURL = (deviceType == .lite) ? binWriter.fileURL : classicCsvRecorder?.fileURL
+        let fileURL: URL?
+        switch t {
+        case .some(.lite):
+            fileURL = binWriter.fileURL
+        case .some(.classic):
+            fileURL = classicCsvRecorder?.fileURL
+        case .none:
+            fileURL = nil
+        }
+
         if let url = fileURL {
             let hasCount = currentOvertakeCount > 0
             let hasDistance = currentDistanceMeters > 0.0
@@ -278,13 +377,14 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         ui { self.isRecording = false }
 
-        // ---------- Live Activity STOP ----------
         if #available(iOS 16.1, *) {
             Task { @MainActor in
                 await live.stop()
             }
         }
+
         liveSessionId = nil
+        recordingDeviceType = nil
     }
 
     // -------------------------------------------------
@@ -304,28 +404,50 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.lastLocation = location
         }
 
-        if deviceType == .lite {
-            var geo = Openbikesensor_Geolocation()
-            geo.latitude = location.coordinate.latitude
-            geo.longitude = location.coordinate.longitude
-            geo.altitude = location.altitude
-            geo.groundSpeed = Float(max(location.speed, 0))
-            geo.hdop = Float(location.horizontalAccuracy)
+        // Nur Lite schreibt Geo in BIN
+        guard recordingDeviceType == .lite else { return }
 
-            var t = Openbikesensor_Time()
-            let ts = location.timestamp.timeIntervalSince1970
-            let sec = Int64(ts)
-            let nanos = Int32((ts - Double(sec)) * 1_000_000_000)
-            t.sourceID = 3
-            t.seconds = sec
-            t.nanoseconds = nanos
-            t.reference = .unix
+        var geo = Openbikesensor_Geolocation()
+        geo.latitude = location.coordinate.latitude
+        geo.longitude = location.coordinate.longitude
+        geo.altitude = location.altitude
+        geo.groundSpeed = Float(max(location.speed, 0))
+        geo.hdop = Float(location.horizontalAccuracy)
 
-            var event = Openbikesensor_Event()
-            event.geolocation = geo
-            event.time = [t]
+        var t = Openbikesensor_Time()
+        let ts = location.timestamp.timeIntervalSince1970
+        let sec = Int64(ts)
+        let nanos = Int32((ts - Double(sec)) * 1_000_000_000)
+        t.sourceID = 3
+        t.seconds = sec
+        t.nanoseconds = nanos
+        t.reference = .unix
 
-            storeEventToBin(event)
+        var event = Openbikesensor_Event()
+        event.geolocation = geo
+        event.time = [t]
+
+        storeEventToBin(event)
+    }
+
+    // =====================================================
+    // MARK: Live Marker setzen
+    // =====================================================
+
+    private func appendLiveOvertakeEvent(distanceCm: Int?) {
+        guard let loc = self.lastLocation else { return }
+        let distanceMeters = distanceCm.map { Double($0) / 100.0 }
+
+        let ev = OvertakeEvent(
+            coordinate: loc.coordinate,
+            distance: distanceMeters
+        )
+
+        ui {
+            self.liveOvertakeEvents.append(ev)
+            if self.liveOvertakeEvents.count > 500 {
+                self.liveOvertakeEvents.removeFirst(self.liveOvertakeEvents.count - 500)
+            }
         }
     }
 
@@ -353,62 +475,101 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     // -------------------------------------------------
-    // MARK: Scan Steuerung (robust)
+    // MARK: Scanning (immer broad)
     // -------------------------------------------------
 
-    private func restartScanForCurrentDeviceType() {
-        guard let central = central, isPoweredOn, hasBluetoothPermission else { return }
-
-        if let p = peripheral {
-            central.cancelPeripheralConnection(p)
-            peripheral = nil
-            ui { self.isConnected = false }
-        }
-
-        stopScan()
-        startStrictScanWithFallback()
-    }
-
     private func stopScan() {
-        scanFallbackTimer?.invalidate()
-        scanFallbackTimer = nil
         central?.stopScan()
     }
 
-    private func startStrictScanWithFallback() {
+    private func startBroadScan() {
         guard let central = central else { return }
         guard isPoweredOn, hasBluetoothPermission else { return }
 
-        scanMode = .strictService
-
-        let services: [CBUUID] = (deviceType == .classic) ? [obsClassicServiceUUID] : [obsLiteServiceUUID]
-        print("Starting STRICT scan for \(deviceType) services=\(services.map{$0.uuidString})")
-
-        central.scanForPeripherals(
-            withServices: services,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
-
-        scanFallbackTimer = Timer.scheduledTimer(withTimeInterval: 6.0, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            guard self.peripheral == nil, self.isConnected == false else { return }
-            self.startBroadFallbackScan()
-        }
-    }
-
-    private func startBroadFallbackScan() {
-        guard let central = central else { return }
-        guard isPoweredOn, hasBluetoothPermission else { return }
-
-        stopScan()
-        scanMode = .broadFallback
-
-        print("Starting BROAD fallback scan for \(deviceType) (connect-then-verify)")
+        print("Starting BROAD scan (connect-then-verify)")
 
         central.scanForPeripherals(
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
+    }
+
+    // -------------------------------------------------
+    // MARK: Watchdog
+    // -------------------------------------------------
+
+    private func watchdogTick() {
+        guard isConnected else { return }
+        guard hasBluetoothPermission, isPoweredOn else { return }
+        guard let p = peripheral else { return }
+
+        if p.state != .connected {
+            print(">> Watchdog: peripheral.state != .connected (\(p.state.rawValue))")
+            stopRecordingDueToDisconnect()
+            if !isRecording { resetAfterDisconnectOrStop() }
+            forceDisconnectAndRescan(reason: "Verbindung verloren")
+            return
+        }
+
+        let now = Date()
+
+        if lastSensorPacketAt == nil {
+            if let t0 = lastConnectAt, now.timeIntervalSince(t0) > connectionStaleAfter {
+                print(">> Watchdog: no sensor packets after connect -> force disconnect")
+                stopRecordingDueToDisconnect()
+                if !isRecording { resetAfterDisconnectOrStop() }
+                forceDisconnectAndRescan(reason: "Keine Sensordaten (Timeout)")
+            }
+            return
+        }
+
+        if let last = lastSensorPacketAt, now.timeIntervalSince(last) > connectionStaleAfter {
+            print(">> Watchdog: sensor packets stale (\(now.timeIntervalSince(last))s) -> force disconnect")
+            stopRecordingDueToDisconnect()
+            if !isRecording { resetAfterDisconnectOrStop() }
+            forceDisconnectAndRescan(reason: "Sensor nicht erreichbar (Timeout)")
+        }
+    }
+
+    private func forceDisconnectAndRescan(reason: String) {
+        guard let central = central else { return }
+        guard let p = peripheral else { return }
+        guard !isForcingDisconnect else { return }
+
+        isForcingDisconnect = true
+
+        ui {
+            self.isConnected = false
+            self.lastError = reason
+            self.detectedDeviceType = nil
+            self.lastBleSource = "-"
+        }
+
+        if !isRecording {
+            resetAfterDisconnectOrStop()
+        }
+
+        if #available(iOS 16.1, *) {
+            Task { @MainActor in
+                await self.live.stop()
+            }
+        }
+        self.liveSessionId = nil
+
+        central.cancelPeripheralConnection(p)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            guard self.isForcingDisconnect else { return }
+
+            self.isForcingDisconnect = false
+
+            self.peripheral = nil
+            self.lastConnectAt = nil
+            self.lastSensorPacketAt = nil
+
+            self.startBroadScan()
+        }
     }
 }
 
@@ -430,15 +591,20 @@ extension BluetoothManager: CBCentralManagerDelegate {
         ui {
             self.hasBluetoothPermission = hasPermission
             self.isPoweredOn = (central.state == .poweredOn)
+
             if central.state != .poweredOn {
+                self.stopRecordingDueToDisconnect()
                 self.isConnected = false
+                if !self.isRecording {
+                    self.resetAfterDisconnectOrStop()
+                }
             }
         }
 
         print("centralManagerDidUpdateState: state=\(central.state.rawValue) perm=\(hasPermission)")
 
         guard central.state == .poweredOn, hasPermission else { return }
-        startStrictScanWithFallback()
+        startBroadScan()
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -447,10 +613,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
                         rssi RSSI: NSNumber) {
 
         let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? "-"
-        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
         let isConnectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue ?? true
-
-        print(">> didDiscover: \(peripheral.name ?? "unknown") rssi=\(RSSI) localName=\(localName) connectable=\(isConnectable) services=\(serviceUUIDs.map{$0.uuidString}) mode=\(scanMode)")
 
         if self.peripheral != nil { return }
         if !isConnectable { return }
@@ -458,21 +621,15 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let name = (peripheral.name ?? "").lowercased()
         let ln = localName.lowercased()
 
-        switch scanMode {
-        case .strictService:
-            if deviceType == .classic {
-                if !serviceUUIDs.isEmpty, !serviceUUIDs.contains(obsClassicServiceUUID) { return }
-            } else {
-                if !serviceUUIDs.isEmpty, !serviceUUIDs.contains(obsLiteServiceUUID) { return }
-            }
+        // Broad-scan: wir verbinden nur Geräte, die nach OBS aussehen.
+        let looksObs = name.contains("obs")
+        || ln.contains("obs")
+        || ln.contains("openbikesensor")
+        || name.contains("openbikesensor")
 
-        case .broadFallback:
-            let looksObs = name.contains("obs")
-            || ln.contains("obs")
-            || ln.contains("openbikesensor")
-            || name.contains("openbikesensor")
-            if !looksObs { return }
-        }
+        if !looksObs { return }
+
+        print(">> didDiscover candidate: \(peripheral.name ?? "unknown") rssi=\(RSSI) localName=\(localName)")
 
         ui {
             self.connectedName = peripheral.name ?? "-"
@@ -501,6 +658,10 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.connectedId = peripheral.identifier.uuidString
         }
 
+        lastConnectAt = Date()
+        lastSensorPacketAt = nil
+        isForcingDisconnect = false
+
         peripheral.discoverServices(nil)
     }
 
@@ -514,8 +675,14 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.lastError = error?.localizedDescription ?? "Verbindung fehlgeschlagen"
         }
 
+        lastConnectAt = nil
+        lastSensorPacketAt = nil
+        isForcingDisconnect = false
+
+        resetAfterDisconnectOrStop()
+
         self.peripheral = nil
-        startStrictScanWithFallback()
+        startBroadScan()
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -523,16 +690,25 @@ extension BluetoothManager: CBCentralManagerDelegate {
                         error: Error?) {
         print(">> didDisconnect \(peripheral.identifier) error=\(String(describing: error))")
 
+        stopRecordingDueToDisconnect()
+
         ui {
             self.isConnected = false
-            if let error = error {
+            if let error = error, !self.isForcingDisconnect {
                 self.lastError = error.localizedDescription
             }
             self.detectedDeviceType = nil
             self.lastBleSource = "-"
         }
 
-        // Live Activity stoppen, damit nichts "hängen bleibt"
+        if !isRecording {
+            resetAfterDisconnectOrStop()
+        }
+
+        lastConnectAt = nil
+        lastSensorPacketAt = nil
+        isForcingDisconnect = false
+
         if #available(iOS 16.1, *) {
             Task { @MainActor in
                 await self.live.stop()
@@ -541,7 +717,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         self.liveSessionId = nil
 
         self.peripheral = nil
-        startStrictScanWithFallback()
+        startBroadScan()
     }
 }
 
@@ -570,14 +746,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             else { self.detectedDeviceType = nil }
         }
 
-        if deviceType == .classic, !hasClassic {
-            ui { self.lastError = "Falsches Gerät verbunden (kein OBS Classic Service)." }
-            central?.cancelPeripheralConnection(peripheral)
-            return
-        }
-
-        if deviceType == .lite, !hasLite {
-            ui { self.lastError = "Falsches Gerät verbunden (kein OBS Lite Service)." }
+        // Nicht kompatibel -> trennen
+        guard hasClassic || hasLite else {
+            ui { self.lastError = "Nicht kompatibles Gerät (kein OBS Service)." }
             central?.cancelPeripheralConnection(peripheral)
             return
         }
@@ -686,7 +857,6 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         guard let data = characteristic.value else { return }
 
-        // Timestamp für "Sensor aktiv" nur bei echten Sensor-Events
         ui {
             switch characteristic.uuid {
             case obsLiteCharTxUUID, obsClassicDistanceCharUUID, obsClassicButtonCharUUID:
@@ -804,10 +974,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.lastError = nil
                 self.updateDerivedState(from: event)
             }
-
-            if deviceType == .lite {
-                storeIncomingSensorEvent(event)
-            }
         }
 
         if let dist = rightMeters {
@@ -823,13 +989,9 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.lastError = nil
                 self.updateDerivedState(from: event)
             }
-
-            if deviceType == .lite {
-                storeIncomingSensorEvent(event)
-            }
         }
 
-        if deviceType == .classic, isRecording {
+        if recordingDeviceType == .classic, isRecording {
             let left = (packet.leftCm  == 0xFFFF) ? nil : packet.leftCm
             let right = (packet.rightCm == 0xFFFF) ? nil : packet.rightCm
             classicCsvRecorder?.recordMeasurement(
@@ -849,7 +1011,7 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         ui { self.handleUserInputPreview() }
 
-        if deviceType == .classic, isRecording {
+        if recordingDeviceType == .classic, isRecording {
             let left = (packet.leftCm  == 0xFFFF) ? nil : packet.leftCm
             let right = (packet.rightCm == 0xFFFF) ? nil : packet.rightCm
             classicCsvRecorder?.recordMeasurement(
@@ -975,7 +1137,9 @@ extension BluetoothManager: CBPeripheralDelegate {
         overtakeDistanceCm = median
         overtakeDistanceText = "Überholabstand: \(median) cm"
 
-        // ---------- Live Activity UPDATE (nur bei Überholvorgang) ----------
+        lastOvertakeAt = Date()
+        appendLiveOvertakeEvent(distanceCm: median)
+
         if isRecording, #available(iOS 16.1, *) {
             let cm = self.overtakeDistanceCm
             let active = self.sensorActiveNow
@@ -996,7 +1160,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     // -------------------------------------------------
 
     private func storeIncomingSensorEvent(_ event: Openbikesensor_Event) {
-        guard isRecording, deviceType == .lite else { return }
+        guard isRecording, recordingDeviceType == .lite else { return }
 
         var eForFile = event
 
@@ -1004,7 +1168,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             let rawMeters = Double(dm.distance)
             if rawMeters > 0.0 {
                 let handlebarHalfCm = Double(handlebarWidthCm) / 2.0
-                let handlebarHalfMeters = handlebarHalfCm / 100.0
+                let handlebarHalfMeters = (handlebarHalfCm / 100.0)
                 let correctedMeters = max(0.0, rawMeters - handlebarHalfMeters)
                 dm.distance = Float(correctedMeters)
                 eForFile.distanceMeasurement = dm
@@ -1026,7 +1190,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     private func storeEventToBin(_ event: Openbikesensor_Event) {
-        guard isRecording, deviceType == .lite else { return }
+        guard isRecording, recordingDeviceType == .lite else { return }
 
         do {
             let raw = try event.serializedData()
@@ -1077,6 +1241,10 @@ private struct MovingMedian {
         if values.count > maxSamples {
             values.removeFirst(values.count - maxSamples)
         }
+    }
+
+    mutating func reset() {
+        values.removeAll(keepingCapacity: true)
     }
 
     var hasMedian: Bool {
