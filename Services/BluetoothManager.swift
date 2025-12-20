@@ -162,7 +162,10 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private let locationManager = CLLocationManager()
 
-    private let binWriter = OBSFileWriter()
+    // Lite BIN Recorder (Protobuf->COBS->OBSFileWriter)
+    private let liteRecorder = LiteBinRecorder()
+
+    // Classic CSV bleibt eigene Datei
     private var classicCsvRecorder: ClassicCsvRecorder?
 
     private var lastLocation: CLLocation?
@@ -216,10 +219,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     // -------------------------------------------------
-    // MARK: Reset bei Disconnect
+    // MARK: Reset bei Disconnect ( Live + Count/Distance auf 0)
     // -------------------------------------------------
 
-    private func resetAfterDisconnectOrStop() {
+    private func resetAfterDisconnect() {
         ui {
             self.leftRawCm = nil
             self.leftCorrectedCm = nil
@@ -236,7 +239,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
             self.lastEvent = nil
 
-            // beides auf Null
+            // beides auf Null bei Disconnect
             self.currentOvertakeCount = 0
             self.currentDistanceMeters = 0
             self.lastLocation = nil
@@ -266,8 +269,8 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         ui { self.userNotice = self.disconnectStopMessage }
 
-        //  Nach Disconnect: alles leeren
-        resetAfterDisconnectOrStop()
+        // Nach Disconnect: alles leeren + Count/Distance = 0
+        resetAfterDisconnect()
     }
 
     // =====================================================
@@ -311,7 +314,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         switch t {
         case .lite:
-            binWriter.startSession()
+            liteRecorder.startSession()
 
         case .classic:
             let halfHandlebar = handlebarWidthCm / 2
@@ -345,7 +348,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         switch t {
         case .some(.lite):
-            binWriter.finishSession()
+            liteRecorder.finishSession()
         case .some(.classic):
             classicCsvRecorder?.finishSession()
         case .none:
@@ -355,7 +358,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         let fileURL: URL?
         switch t {
         case .some(.lite):
-            fileURL = binWriter.fileURL
+            fileURL = liteRecorder.fileURL
         case .some(.classic):
             fileURL = classicCsvRecorder?.fileURL
         case .none:
@@ -404,7 +407,7 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.lastLocation = location
         }
 
-        // Nur Lite schreibt Geo in BIN
+        // Nur Lite schreibt Geo ins BIN
         guard recordingDeviceType == .lite else { return }
 
         var geo = Openbikesensor_Geolocation()
@@ -427,7 +430,9 @@ final class BluetoothManager: NSObject, ObservableObject {
         event.geolocation = geo
         event.time = [t]
 
-        storeEventToBin(event)
+        // Recorder ergänzt Time ohnehin nochmal; das ist unkritisch,
+        // aber wenn du doppelte Times vermeiden willst: hier event.time = [] setzen.
+        liteRecorder.record(event: event, handlebarWidthCm: handlebarWidthCm)
     }
 
     // =====================================================
@@ -475,7 +480,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     // -------------------------------------------------
-    // MARK: Scanning (immer broad)
+    // MARK: Scanning immer broad
     // -------------------------------------------------
 
     private func stopScan() {
@@ -506,7 +511,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         if p.state != .connected {
             print(">> Watchdog: peripheral.state != .connected (\(p.state.rawValue))")
             stopRecordingDueToDisconnect()
-            if !isRecording { resetAfterDisconnectOrStop() }
+            if !isRecording { resetAfterDisconnect() }
             forceDisconnectAndRescan(reason: "Verbindung verloren")
             return
         }
@@ -517,7 +522,7 @@ final class BluetoothManager: NSObject, ObservableObject {
             if let t0 = lastConnectAt, now.timeIntervalSince(t0) > connectionStaleAfter {
                 print(">> Watchdog: no sensor packets after connect -> force disconnect")
                 stopRecordingDueToDisconnect()
-                if !isRecording { resetAfterDisconnectOrStop() }
+                if !isRecording { resetAfterDisconnect() }
                 forceDisconnectAndRescan(reason: "Keine Sensordaten (Timeout)")
             }
             return
@@ -526,7 +531,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         if let last = lastSensorPacketAt, now.timeIntervalSince(last) > connectionStaleAfter {
             print(">> Watchdog: sensor packets stale (\(now.timeIntervalSince(last))s) -> force disconnect")
             stopRecordingDueToDisconnect()
-            if !isRecording { resetAfterDisconnectOrStop() }
+            if !isRecording { resetAfterDisconnect() }
             forceDisconnectAndRescan(reason: "Sensor nicht erreichbar (Timeout)")
         }
     }
@@ -546,7 +551,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         if !isRecording {
-            resetAfterDisconnectOrStop()
+            resetAfterDisconnect()
         }
 
         if #available(iOS 16.1, *) {
@@ -596,7 +601,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
                 self.stopRecordingDueToDisconnect()
                 self.isConnected = false
                 if !self.isRecording {
-                    self.resetAfterDisconnectOrStop()
+                    self.resetAfterDisconnect()
                 }
             }
         }
@@ -621,7 +626,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let name = (peripheral.name ?? "").lowercased()
         let ln = localName.lowercased()
 
-        // Broad-scan: wir verbinden nur Geräte, die nach OBS aussehen.
+        // Broad-scan: nur Kandidaten verbinden, die nach OBS aussehen.
         let looksObs = name.contains("obs")
         || ln.contains("obs")
         || ln.contains("openbikesensor")
@@ -679,7 +684,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         lastSensorPacketAt = nil
         isForcingDisconnect = false
 
-        resetAfterDisconnectOrStop()
+        resetAfterDisconnect()
 
         self.peripheral = nil
         startBroadScan()
@@ -701,8 +706,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.lastBleSource = "-"
         }
 
+        // Auch wenn nicht recording: Werte/Count/Dist leeren
         if !isRecording {
-            resetAfterDisconnectOrStop()
+            resetAfterDisconnect()
         }
 
         lastConnectAt = nil
@@ -909,7 +915,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     // -------------------------------------------------
-    // MARK: - Lite Pfad (Protobuf → BIN)
+    // MARK: - Lite Pfad (Protobuf -> BIN via LiteBinRecorder)
     // -------------------------------------------------
 
     private func handleLiteUpdate(_ data: Data) {
@@ -925,7 +931,10 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.updateDerivedState(from: event)
             }
 
-            storeIncomingSensorEvent(event)
+            // BIN schreiben nur wenn Lite-Aufnahme läuft
+            if isRecording, recordingDeviceType == .lite {
+                liteRecorder.record(event: event, handlebarWidthCm: handlebarWidthCm)
+            }
 
         } catch {
             let msg = "Protobuf-Decode-Fehler (Lite): \(error.localizedDescription)"
@@ -935,7 +944,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     // -------------------------------------------------
-    // MARK: - Classic Pfad (8-Byte-Pakete → CSV)
+    // MARK: - Classic Pfad (8-Byte-Pakete -> CSV)
     // -------------------------------------------------
 
     func parseClassicPacket(_ data: Data) -> (clockMs: UInt32, leftCm: UInt16, rightCm: UInt16)? {
@@ -961,6 +970,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         let leftMeters: Double?  = (packet.leftCm  == 0xFFFF) ? nil : Double(packet.leftCm)  / 100.0
         let rightMeters: Double? = (packet.rightCm == 0xFFFF) ? nil : Double(packet.rightCm) / 100.0
 
+        // Preview/State: wie gehabt als DistanceMeasurement Events „simulieren“
         if let dist = leftMeters {
             var dm = Openbikesensor_DistanceMeasurement()
             dm.sourceID = 1
@@ -991,6 +1001,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
 
+        // CSV schreiben nur wenn Classic-Aufnahme läuft
         if recordingDeviceType == .classic, isRecording {
             let left = (packet.leftCm  == 0xFFFF) ? nil : packet.leftCm
             let right = (packet.rightCm == 0xFFFF) ? nil : packet.rightCm
@@ -1011,6 +1022,7 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         ui { self.handleUserInputPreview() }
 
+        // CSV schreiben nur wenn Classic-Aufnahme läuft
         if recordingDeviceType == .classic, isRecording {
             let left = (packet.leftCm  == 0xFFFF) ? nil : packet.leftCm
             let right = (packet.rightCm == 0xFFFF) ? nil : packet.rightCm
@@ -1152,57 +1164,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                     lastPacketAt: lastAt
                 )
             }
-        }
-    }
-
-    // -------------------------------------------------
-    // MARK: - BIN Schreiblogik (nur für Lite)
-    // -------------------------------------------------
-
-    private func storeIncomingSensorEvent(_ event: Openbikesensor_Event) {
-        guard isRecording, recordingDeviceType == .lite else { return }
-
-        var eForFile = event
-
-        if case .distanceMeasurement(var dm) = eForFile.content {
-            let rawMeters = Double(dm.distance)
-            if rawMeters > 0.0 {
-                let handlebarHalfCm = Double(handlebarWidthCm) / 2.0
-                let handlebarHalfMeters = (handlebarHalfCm / 100.0)
-                let correctedMeters = max(0.0, rawMeters - handlebarHalfMeters)
-                dm.distance = Float(correctedMeters)
-                eForFile.distanceMeasurement = dm
-            }
-        }
-
-        var t = Openbikesensor_Time()
-        let now = Date().timeIntervalSince1970
-        let sec = Int64(now)
-        let nanos = Int32((now - Double(sec)) * 1_000_000_000)
-        t.sourceID = 3
-        t.seconds = sec
-        t.nanoseconds = nanos
-        t.reference = .unix
-
-        eForFile.time.append(t)
-
-        storeEventToBin(eForFile)
-    }
-
-    private func storeEventToBin(_ event: Openbikesensor_Event) {
-        guard isRecording, recordingDeviceType == .lite else { return }
-
-        do {
-            let raw = try event.serializedData()
-            let cobs = COBS.encode(raw)
-
-            var frame = Data()
-            frame.append(cobs)
-            frame.append(0x00)
-
-            binWriter.write(frame)
-        } catch {
-            print("storeEventToBin: \(error)")
         }
     }
 }
