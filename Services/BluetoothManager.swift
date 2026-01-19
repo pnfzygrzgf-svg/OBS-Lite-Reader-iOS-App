@@ -81,6 +81,9 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     /// Aufnahmetyp für die aktuelle Session (damit stopRecording weiß, was zu finalisieren ist).
     private var recordingDeviceType: ObsDeviceType?
+    
+    /// Merkt sich, ob vor Disconnect eine Aufnahme lief → Auto-Restart nach Reconnect
+    private var shouldRestartRecordingOnReconnect: Bool = false
 
     // -------------------------------------------------
     // MARK: Published State (SwiftUI)
@@ -257,17 +260,21 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     // -------------------------------------------------
-    // MARK: Disconnect -> Aufnahme beenden + Meldung
+    // MARK: Disconnect -> Aufnahme beenden + Auto-Restart merken
     // -------------------------------------------------
-
-    private let disconnectStopMessage = "Verbindung zum Sensor verloren: Aufnahme wurde beendet und Datei gespeichert"
 
     private func stopRecordingDueToDisconnect() {
         guard isRecording else { return }
 
+        // Merken, dass Aufnahme lief → nach Reconnect automatisch neu starten
+        shouldRestartRecordingOnReconnect = true
+
         stopRecording()
 
-        ui { self.userNotice = self.disconnectStopMessage }
+        // Meldung anpassen: User weiß, dass es automatisch weitergeht
+        ui {
+            self.userNotice = "Verbindung zum Sensor verloren: Aufnahme wurde gespeichert. Neue Aufnahme startet automatisch bei Reconnect."
+        }
 
         // Nach Disconnect: alles leeren + Count/Distance = 0
         resetAfterDisconnect()
@@ -344,6 +351,9 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     func stopRecording() {
+        // Manuelles Stoppen → kein Auto-Restart
+        shouldRestartRecordingOnReconnect = false
+        
         let t = recordingDeviceType
 
         switch t {
@@ -576,6 +586,26 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.startBroadScan()
         }
     }
+    
+    // -------------------------------------------------
+    // MARK: Auto-Restart Recording nach Reconnect
+    // -------------------------------------------------
+    
+    private func tryAutoRestartRecording() {
+        guard shouldRestartRecordingOnReconnect else { return }
+        guard isConnected else { return }
+        guard detectedDeviceType != nil else { return }
+        
+        shouldRestartRecordingOnReconnect = false
+        
+        startRecording()
+        
+        ui {
+            self.userNotice = "Verbindung wiederhergestellt: Neue Aufnahme gestartet."
+        }
+        
+        print(">> Auto-restart recording after reconnect")
+    }
 }
 
 // =====================================================
@@ -790,6 +820,13 @@ extension BluetoothManager: CBPeripheralDelegate {
                 break
             }
         }
+        
+        // Auto-Restart Recording nach Reconnect (sobald Gerätetyp erkannt)
+        if hasClassic || hasLite {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.tryAutoRestartRecording()
+            }
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral,
@@ -970,7 +1007,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         let leftMeters: Double?  = (packet.leftCm  == 0xFFFF) ? nil : Double(packet.leftCm)  / 100.0
         let rightMeters: Double? = (packet.rightCm == 0xFFFF) ? nil : Double(packet.rightCm) / 100.0
 
-        // Preview/State: wie gehabt als DistanceMeasurement Events „simulieren“
+        // Preview/State: wie gehabt als DistanceMeasurement Events „simulieren"
         if let dist = leftMeters {
             var dm = Openbikesensor_DistanceMeasurement()
             dm.sourceID = 1
