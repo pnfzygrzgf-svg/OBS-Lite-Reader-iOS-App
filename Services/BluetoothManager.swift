@@ -118,7 +118,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var rightDistanceText: String = "Rechts: Noch keine Messung."
     @Published var overtakeDistanceText: String = "Überholabstand: Noch keine Messung."
 
-    @Published var lastMedianAtPressCm: Int?
+    @Published var lastMinimumAtPressCm: Int?
 
     @Published var leftRawCm: Int?
     @Published var leftCorrectedCm: Int?
@@ -179,7 +179,8 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private var lastLocation: CLLocation?
 
-    private var movingMedian = MovingMedian(windowSize: 3, maxSamples: 122)
+    private var timeWindowMinimum = TimeWindowMinimum(windowSeconds: 5.0)       // Source ID 1 (overtaker/links)
+    private var timeWindowMinimumRight = TimeWindowMinimum(windowSeconds: 5.0)  // Source ID 2 (stationary/rechts)
 
     // -------------------------------------------------
     // MARK: Connection Watchdog
@@ -247,7 +248,7 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.rightRawCm = nil
             self.rightCorrectedCm = nil
             self.overtakeDistanceCm = nil
-            self.lastMedianAtPressCm = nil
+            self.lastMinimumAtPressCm = nil
 
             self.leftDistanceText = "Links: Noch keine Messung."
             self.rightDistanceText = "Rechts: Noch keine Messung."
@@ -271,7 +272,8 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.lastBleSource = "-"
         }
 
-        movingMedian.reset()
+        timeWindowMinimum.reset()
+        timeWindowMinimumRight.reset()
     }
 
     // -------------------------------------------------
@@ -1022,6 +1024,21 @@ extension BluetoothManager: CBPeripheralDelegate {
 
             // BIN schreiben nur wenn Lite-Aufnahme läuft
             if isRecording, recordingDeviceType == .lite {
+                // UserInput-Events nur schreiben wenn beide Sensoren Messungen im 5s-Fenster haben
+                // (Portal benötigt min() beider Sensoren, crasht sonst mit "min() iterable argument is empty")
+                if case .userInput(_) = event.content {
+                    let hasOvertaker = timeWindowMinimum.currentMinimum != nil
+                    let hasStationary = timeWindowMinimumRight.currentMinimum != nil
+
+                    if !hasOvertaker || !hasStationary {
+                        print("UserInput NICHT geschrieben: overtaker=\(hasOvertaker), stationary=\(hasStationary)")
+                        ui {
+                            self.userNotice = "Überholvorgang nicht gespeichert: Keine gültigen Sensordaten im Zeitfenster."
+                        }
+                        return
+                    }
+                }
+
                 liteRecorder.record(event: event, handlebarWidthCm: handlebarWidthCm)
             }
 
@@ -1205,8 +1222,11 @@ extension BluetoothManager: CBPeripheralDelegate {
         let handlebarHalf = Double(handlebarWidthCm) / 2.0
         let correctedCm = max(0, Int((Double(rawCm) - handlebarHalf).rounded()))
 
+        // Beide Sensoren für das 5-Sekunden-Zeitfenster tracken (Portal-Kompatibilität)
         if dm.sourceID == 1 {
-            movingMedian.add(correctedCm)
+            timeWindowMinimum.add(correctedCm)
+        } else {
+            timeWindowMinimumRight.add(correctedCm)
         }
 
         let infoText = "Gemessen: \(rawCm) cm  |  berechnet: \(correctedCm) cm"
@@ -1227,19 +1247,19 @@ extension BluetoothManager: CBPeripheralDelegate {
             currentOvertakeCount += 1
         }
 
-        guard let median = movingMedian.currentMedian else {
+        guard let minimum = timeWindowMinimum.currentMinimum else {
             overtakeDistanceText = "Überholabstand: Noch keine Messung."
-            lastMedianAtPressCm = nil
+            lastMinimumAtPressCm = nil
             overtakeDistanceCm = nil
             return
         }
 
-        lastMedianAtPressCm = median
-        overtakeDistanceCm = median
-        overtakeDistanceText = "Überholabstand: \(median) cm"
+        lastMinimumAtPressCm = minimum
+        overtakeDistanceCm = minimum
+        overtakeDistanceText = "Überholabstand: \(minimum) cm"
 
         lastOvertakeAt = Date()
-        appendLiveOvertakeEvent(distanceCm: median)
+        appendLiveOvertakeEvent(distanceCm: minimum)
 
         if isRecording, #available(iOS 16.1, *) {
             let cm = self.overtakeDistanceCm
@@ -1273,46 +1293,45 @@ extension BluetoothManager: CLLocationManagerDelegate {
 }
 
 // =====================================================
-// MARK: - MovingMedian
+// MARK: - TimeWindowMinimum
 // =====================================================
 
-private struct MovingMedian {
-    let windowSize: Int
-    let maxSamples: Int
-    private var values: [Int] = []
+/// Speichert Messwerte mit Zeitstempel und berechnet das Minimum
+/// der letzten `windowSeconds` Sekunden - analog zum Portal (TIME_WINDOW_SIZE = 5.0)
+private struct TimeWindowMinimum {
+    let windowSeconds: TimeInterval
+    private var samples: [(timestamp: Date, value: Int)] = []
 
-    init(windowSize: Int, maxSamples: Int) {
-        self.windowSize = max(1, windowSize)
-        self.maxSamples = max(windowSize, maxSamples)
+    init(windowSeconds: TimeInterval = 5.0) {
+        self.windowSeconds = windowSeconds
     }
 
     mutating func add(_ value: Int) {
-        values.append(value)
-        if values.count > maxSamples {
-            values.removeFirst(values.count - maxSamples)
-        }
+        let now = Date()
+        samples.append((timestamp: now, value: value))
+        pruneOldSamples(relativeTo: now)
     }
 
     mutating func reset() {
-        values.removeAll(keepingCapacity: true)
+        samples.removeAll(keepingCapacity: true)
     }
 
-    var hasMedian: Bool {
-        values.count >= windowSize
+    /// Entfernt Samples, die älter als das Zeitfenster sind
+    private mutating func pruneOldSamples(relativeTo now: Date) {
+        let cutoff = now.addingTimeInterval(-windowSeconds)
+        samples.removeAll { $0.timestamp < cutoff }
     }
 
-    var currentMedian: Int? {
-        guard hasMedian else { return nil }
-        let slice = values.suffix(windowSize)
-        let sorted = slice.sorted()
-        let count = sorted.count
-        let mid = count / 2
+    var hasValue: Bool {
+        !samples.isEmpty
+    }
 
-        if count % 2 == 1 {
-            return sorted[mid]
-        } else {
-            let m = Double(sorted[mid - 1] + sorted[mid]) / 2.0
-            return Int(m.rounded())
-        }
+    /// Liefert das Minimum aller Werte im Zeitfenster (wie Portal: min())
+    var currentMinimum: Int? {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-windowSeconds)
+        let validSamples = samples.filter { $0.timestamp >= cutoff }
+        guard !validSamples.isEmpty else { return nil }
+        return validSamples.map { $0.value }.min()
     }
 }
